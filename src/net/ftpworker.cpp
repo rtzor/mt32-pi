@@ -360,7 +360,8 @@ const TDirectoryListEntry* CFTPWorker::BuildDirectoryList(size_t& nOutEntries) c
 		for (size_t i = 0; i < nVolumes; ++i)
 		{
 			char VolumeName[6];
-			strncpy(VolumeName, VolumeNames[i], sizeof(VolumeName));
+			snprintf(VolumeName, sizeof(VolumeName) - 1, "%s", VolumeNames[i]);
+			VolumeName[sizeof(VolumeName) - 2] = '\0';
 			strcat(VolumeName, ":");
 
 			// Returns FR_
@@ -380,7 +381,7 @@ const TDirectoryListEntry* CFTPWorker::BuildDirectoryList(size_t& nOutEntries) c
 			if (VolumesAvailable[i])
 			{
 				TDirectoryListEntry& Entry = pEntries[nCurrentEntry++];
-				strncpy(Entry.Name, VolumeNames[i], sizeof(Entry.Name));
+				snprintf(Entry.Name, sizeof(Entry.Name), "%s", VolumeNames[i]);
 				Entry.Type = TDirectoryListEntryType::Directory;
 				Entry.nSize = 0;
 				Entry.nLastModifedDate = 0;
@@ -411,7 +412,7 @@ const TDirectoryListEntry* CFTPWorker::BuildDirectoryList(size_t& nOutEntries) c
 			while (Result == FR_OK && *FileInfo.fname)
 			{
 				TDirectoryListEntry& Entry = pEntries[nCurrentEntry++];
-				strncpy(Entry.Name, FileInfo.fname, sizeof(Entry.Name));
+				snprintf(Entry.Name, sizeof(Entry.Name), "%s", FileInfo.fname);
 
 				if (FileInfo.fattrib & AM_DIR)
 				{
@@ -461,7 +462,7 @@ bool CFTPWorker::Port(const char* pArgs)
 		return false;
 
 	char Buffer[TextBufferSize];
-	strncpy(Buffer, pArgs, sizeof(Buffer));
+	snprintf(Buffer, sizeof(Buffer), "%s", pArgs);
 
 	if (m_pDataSocket != nullptr)
 	{

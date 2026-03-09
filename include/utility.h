@@ -136,10 +136,9 @@ namespace Utility
 	template<class T>
 	inline void Swap(T& ObjectA, T& ObjectB)
 	{
-		u8 Buffer[sizeof(T)];
-		memcpy(Buffer, &ObjectA, sizeof(T));
-		memcpy(&ObjectA, &ObjectB, sizeof(T));
-		memcpy(&ObjectB, Buffer, sizeof(T));
+		T Buffer(ObjectA);
+		ObjectA = ObjectB;
+		ObjectB = Buffer;
 	}
 
 	namespace

@@ -42,9 +42,8 @@ $(CIRCLE_STDLIB_CONFIG) $(CIRCLE_CONFIG)&:
 	$(CIRCLESTDLIBHOME)/configure --raspberrypi=$(RASPBERRYPI) --prefix=$(PREFIX)
 
 # Apply patches
-	@${APPLY_PATCH} $(CIRCLEHOME) patches/circle-45-minimal-usb-drivers.patch
-	@${APPLY_PATCH} $(CIRCLEHOME) patches/circle-45-cp210x-remove-partnum-check.patch
-	@${APPLY_PATCH} $(CIRCLEHOME) patches/circle-45-gzip-kernel.patch
+	@${APPLY_PATCH} $(CIRCLEHOME) patches/circle-49-minimal-usb-drivers.patch
+	@${APPLY_PATCH} $(CIRCLEHOME) patches/circle-49-cp210x-remove-partnum-check.patch
 
 ifeq ($(strip $(GC_SECTIONS)),1)
 # Enable function/data sections for circle-stdlib

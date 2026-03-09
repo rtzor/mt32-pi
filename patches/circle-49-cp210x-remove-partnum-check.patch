@@ -1,0 +1,29 @@
+diff --git a/lib/usb/usbserialcp210x.cpp b/lib/usb/usbserialcp210x.cpp
+index ce27ab7e..520b8fc8 100644
+--- a/lib/usb/usbserialcp210x.cpp
++++ b/lib/usb/usbserialcp210x.cpp
+@@ -116,14 +116,19 @@ boolean CUSBSerialCP210xDevice::Configure (void)
+ 		}
+ 	}
+ 
++	// if (m_pDeviceInfo == 0)
++	// {
++	// 	CLogger::Get ()->Write (FromCp210x, LogError, "Unsupported part number: 0x%02X",
++	// 				rxData[0]);
++	//
++	// 	return FALSE;
++	// }
+ 	if (m_pDeviceInfo == 0)
+ 	{
+-		CLogger::Get ()->Write (FromCp210x, LogError, "Unsupported part number: 0x%02X",
+-					rxData[0]);
+-
+-		return FALSE;
++		// Unknown/clone variant: default to CP2102 profile
++		m_pDeviceInfo = &s_DeviceInfo[1];
+ 	}
+-	CLogger::Get ()->Write (FromCp210x, LogNotice, "Part number: %s", m_pDeviceInfo->Name);
++	CLogger::Get ()->Write (FromCp210x, LogNotice, "Part number: 0x%02X (%s)", rxData[0], m_pDeviceInfo->Name);
+ 
+ 	if (pHost->ControlMessage (GetEndpoint0 (),
+ 				   REQUEST_OUT | REQUEST_VENDOR | REQUEST_TO_INTERFACE,

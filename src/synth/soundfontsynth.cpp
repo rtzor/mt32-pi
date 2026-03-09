@@ -184,8 +184,8 @@ bool CSoundFontSynth::Initialize()
 	// Install logging handlers
 	fluid_set_log_function(FLUID_PANIC, FluidSynthLogCallback, this);
 	fluid_set_log_function(FLUID_ERR, FluidSynthLogCallback, this);
-	// fluid_set_log_function(FLUID_WARN, FluidSynthLogCallback, this);
-	// fluid_set_log_function(FLUID_INFO, FluidSynthLogCallback, this);
+	fluid_set_log_function(FLUID_WARN, FluidSynthLogCallback, this);
+	fluid_set_log_function(FLUID_INFO, FluidSynthLogCallback, this);
 	// fluid_set_log_function(FLUID_DBG, FluidSynthLogCallback, this);
 
 	m_pSettings = new_fluid_settings();
