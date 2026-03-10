@@ -53,6 +53,18 @@ public:
 	size_t GetSoundFontIndex() const { return m_nCurrentSoundFontIndex; }
 	CSoundFontManager& GetSoundFontManager() { return m_SoundFontManager; }
 
+	// Real-time FX control
+	void SetReverbActive(bool bActive);
+	bool GetReverbActive() const { return m_bReverbActive; }
+	void SetReverbRoomSize(float nRoomSize);
+	float GetReverbRoomSize() const { return m_nReverbRoomSize; }
+	void SetReverbLevel(float nLevel);
+	float GetReverbLevel() const { return m_nReverbLevel; }
+	void SetChorusActive(bool bActive);
+	bool GetChorusActive() const { return m_bChorusActive; }
+	void SetChorusDepth(float nDepth);
+	float GetChorusDepth() const { return m_nChorusDepth; }
+
 private:
 	bool Reinitialize(const char* pSoundFontPath, const TFXProfile* pFXProfile);
 	void ResetMIDIMonitor();
@@ -68,6 +80,13 @@ private:
 
 	u8 m_nVolume;
 	float m_nInitialGain;
+
+	// Cached FX state (kept in sync with FluidSynth)
+	bool  m_bReverbActive;
+	float m_nReverbRoomSize;
+	float m_nReverbLevel;
+	bool  m_bChorusActive;
+	float m_nChorusDepth;
 
 	u16 m_nPercussionMask;
 	size_t m_nCurrentSoundFontIndex;

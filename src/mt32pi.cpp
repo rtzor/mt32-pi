@@ -119,7 +119,8 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_nMasterVolume(100),
 	  m_pCurrentSynth(nullptr),
 	  m_pMT32Synth(nullptr),
-	  m_pSoundFontSynth(nullptr)
+	  m_pSoundFontSynth(nullptr),
+	  m_bMenuLongPressConsumed(false)
 {
 	s_pThis = this;
 }
@@ -1050,7 +1051,10 @@ void CMT32Pi::ProcessEventQueue()
 				break;
 
 			case TEventType::Encoder:
-				SetMasterVolume(m_nMasterVolume + Event.Encoder.nDelta);
+				if (m_UserInterface.IsInMenu())
+					m_UserInterface.MenuEncoderEvent(Event.Encoder.nDelta);
+				else
+					SetMasterVolume(m_nMasterVolume + Event.Encoder.nDelta);
 				break;
 		}
 	}
@@ -1060,7 +1064,21 @@ void CMT32Pi::ProcessButtonEvent(const TButtonEvent& Event)
 {
 	if (Event.Button == TButton::EncoderButton)
 	{
-		LCDLog(TLCDLogType::Notice, "Enc. button %s", Event.bPressed ? "PRESSED" : "RELEASED");
+		if (Event.bPressed && Event.bRepeat && !m_bMenuLongPressConsumed)
+		{
+			// Long press: enter or exit menu
+			m_bMenuLongPressConsumed = true;
+			if (m_UserInterface.IsInMenu())
+				m_UserInterface.MenuBackEvent();
+			else
+				m_UserInterface.EnterMenu(m_pSoundFontSynth, m_pMT32Synth, m_pCurrentSynth);
+		}
+		else if (!Event.bPressed)
+		{
+			if (!m_bMenuLongPressConsumed && m_UserInterface.IsInMenu())
+				m_UserInterface.MenuSelectEvent();
+			m_bMenuLongPressConsumed = false;
+		}
 		return;
 	}
 

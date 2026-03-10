@@ -213,6 +213,9 @@ private:
 	CMT32Synth* m_pMT32Synth;
 	CSoundFontSynth* m_pSoundFontSynth;
 
+	// Menu long-press tracking
+	bool m_bMenuLongPressConsumed;
+
 	// MIDI receive buffer
 	CRingBuffer<u8, MIDIRxBufferSize> m_MIDIRxBuffer;
 

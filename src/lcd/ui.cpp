@@ -44,7 +44,20 @@ CUserInterface::CUserInterface()
 	  m_SystemMessageTextBuffer{'\0'},
 	  m_SysExDisplayMessageType(TSysExDisplayMessage::Roland),
 	  m_SysExTextBuffer{'\0'},
-	  m_SysExPixelBuffer{0}
+m_SysExPixelBuffer{0},
+          m_pMenuSF(nullptr),
+          m_pMenuMT32(nullptr),
+          m_pMenuCurrentSynth(nullptr),
+          m_nMenuCursor(0),
+          m_nMenuScroll(0),
+          m_bMenuEditing(false),
+          m_bMenuReverbActive(true),
+          m_fMenuReverbRoomSize(0.2f),
+          m_fMenuReverbLevel(0.9f),
+          m_bMenuChorusActive(true),
+          m_fMenuChorusDepth(8.0f),
+          m_nMenuROMSet(0),
+          m_nMenuSoundFont(0)
 {
 }
 
@@ -324,8 +337,12 @@ bool CUserInterface::DrawSystemState(CLCD& LCD) const
 	if (m_State == TState::None)
 		return false;
 
+        if (m_State == TState::InMenu)
+        {
+                DrawMenu(LCD);
+                return true;
+        }
 	const u8 nHeight = LCD.Height();
-
 	if (LCD.GetType() == CLCD::TType::Graphical)
 	{
 		const u8 nMessageRow = nHeight == 32 ? 0 : 1;
@@ -451,3 +468,4 @@ void CUserInterface::DrawSysExBitmap(CLCD& LCD, u8 nFirstRow, u8 nRows) const
 		}
 	}
 }
+

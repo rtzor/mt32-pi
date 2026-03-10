@@ -29,73 +29,104 @@
 #include "lcd/lcd.h"
 
 class CSynthBase;
+class CSoundFontSynth;
+class CMT32Synth;
 
 class CUserInterface
 {
 public:
-	enum class TSysExDisplayMessage
-	{
-		Roland,
-		Yamaha,
-	};
+enum class TSysExDisplayMessage
+{
+	Roland,
+	Yamaha,
+};
 
-	CUserInterface();
+CUserInterface();
 
-	void Update(CLCD& LCD, CSynthBase& Synth, unsigned int nTicks);
+void Update(CLCD& LCD, CSynthBase& Synth, unsigned int nTicks);
 
-	void ShowSystemMessage(const char* pMessage, bool bSpinner = false);
-	void ClearSpinnerMessage();
-	void DisplayImage(TImage Image);
-	void ShowSysExText(TSysExDisplayMessage Type, const u8* pMessage, size_t nSize, u8 nOffset);
-	void ShowSysExBitmap(TSysExDisplayMessage Type, const u8* pData, size_t nSize);
-	void EnterPowerSavingMode();
-	void ExitPowerSavingMode();
+void ShowSystemMessage(const char* pMessage, bool bSpinner = false);
+void ClearSpinnerMessage();
+void DisplayImage(TImage Image);
+void ShowSysExText(TSysExDisplayMessage Type, const u8* pMessage, size_t nSize, u8 nOffset);
+void ShowSysExBitmap(TSysExDisplayMessage Type, const u8* pData, size_t nSize);
+void EnterPowerSavingMode();
+void ExitPowerSavingMode();
 
-	bool IsScrolling() const { return m_bIsScrolling; }
+// Encoder menu
+void EnterMenu(CSoundFontSynth* pSF, CMT32Synth* pMT32, CSynthBase* pCurrent);
+void ExitMenu();
+bool IsInMenu() const { return m_State == TState::InMenu; }
+bool MenuEncoderEvent(s8 nDelta);
+bool MenuSelectEvent();
+bool MenuBackEvent();
 
-	static u8 CenterMessageOffset(CLCD& LCD, const char* pMessage);
-	static void DrawChannelLevels(CLCD& LCD, u8 nBarHeight, float* pChannelLevels, float* pPeakLevels, u8 nChannels, bool bDrawBarBases);
+bool IsScrolling() const { return m_bIsScrolling; }
+
+static u8 CenterMessageOffset(CLCD& LCD, const char* pMessage);
+static void DrawChannelLevels(CLCD& LCD, u8 nBarHeight, float* pChannelLevels, float* pPeakLevels, u8 nChannels, bool bDrawBarBases);
 
 private:
-	enum class TState
-	{
-		None,
-		DisplayingMessage,
-		DisplayingSpinnerMessage,
-		DisplayingImage,
-		DisplayingSysExText,
-		DisplayingSysExBitmap,
-		EnteringPowerSavingMode,
-		InPowerSavingMode
-	};
+enum class TState
+{
+	None,
+	DisplayingMessage,
+	DisplayingSpinnerMessage,
+	DisplayingImage,
+	DisplayingSysExText,
+	DisplayingSysExBitmap,
+	EnteringPowerSavingMode,
+	InPowerSavingMode,
+	InMenu,
+};
 
-	bool UpdateScroll(CLCD& LCD, unsigned int nTicks);
-	bool DrawSystemState(CLCD& LCD) const;
-	void DrawSysExText(CLCD& LCD, u8 nFirstRow) const;
-	void DrawSysExBitmap(CLCD& LCD, u8 nFirstRow, u8 nRows) const;
+bool UpdateScroll(CLCD& LCD, unsigned int nTicks);
+bool DrawSystemState(CLCD& LCD) const;
+void DrawSysExText(CLCD& LCD, u8 nFirstRow) const;
+void DrawSysExBitmap(CLCD& LCD, u8 nFirstRow, u8 nRows) const;
+void DrawMenu(CLCD& LCD) const;
 
-	static void DrawChannelLevelsCharacter(CLCD& LCD, u8 nRows, u8 nBarOffsetX, u8 nBarYOffset, u8 nBarSpacing, const float* pChannelLevels, u8 nChannels, bool bDrawBarBases);
-	static void DrawChannelLevelsGraphical(CLCD& LCD, u8 nBarOffsetX, u8 nBarYOffset, u8 nBarWidth, u8 nBarHeight, u8 nBarSpacing, const float* pChannelLevels, const float* pPeakLevels, u8 nChannels, bool bDrawBarBases);
+static void DrawChannelLevelsCharacter(CLCD& LCD, u8 nRows, u8 nBarOffsetX, u8 nBarYOffset, u8 nBarSpacing, const float* pChannelLevels, u8 nChannels, bool bDrawBarBases);
+static void DrawChannelLevelsGraphical(CLCD& LCD, u8 nBarOffsetX, u8 nBarYOffset, u8 nBarWidth, u8 nBarHeight, u8 nBarSpacing, const float* pChannelLevels, const float* pPeakLevels, u8 nChannels, bool bDrawBarBases);
 
-	static constexpr size_t SystemMessageTextBufferSize = 256;
-	static constexpr size_t SyxExTextBufferSize = 32 + 1;
-	static constexpr size_t SysExPixelBufferSize = 64;
+static constexpr size_t SystemMessageTextBufferSize = 256;
+static constexpr size_t SyxExTextBufferSize = 32 + 1;
+static constexpr size_t SysExPixelBufferSize = 64;
 
-	static constexpr unsigned SystemMessageDisplayTimeMillis = 3000;
-	static constexpr unsigned SystemMessageSpinnerTimeMillis = 32;
-	static constexpr unsigned SC55DisplayTimeMillis = 3000;
+static constexpr unsigned SystemMessageDisplayTimeMillis = 3000;
+static constexpr unsigned SystemMessageSpinnerTimeMillis = 32;
+static constexpr unsigned SC55DisplayTimeMillis = 3000;
 
-	// UI state
-	TState m_State;
-	unsigned m_nStateTime;
-	bool m_bIsScrolling;
-	size_t m_nCurrentScrollOffset;
-	size_t m_nCurrentSpinnerChar;
-	TImage m_CurrentImage;
-	char m_SystemMessageTextBuffer[SystemMessageTextBufferSize];
-	TSysExDisplayMessage m_SysExDisplayMessageType;
-	char m_SysExTextBuffer[SyxExTextBufferSize];
-	u8 m_SysExPixelBuffer[SysExPixelBufferSize];
+// UI state
+TState m_State;
+unsigned m_nStateTime;
+bool m_bIsScrolling;
+size_t m_nCurrentScrollOffset;
+size_t m_nCurrentSpinnerChar;
+TImage m_CurrentImage;
+char m_SystemMessageTextBuffer[SystemMessageTextBufferSize];
+TSysExDisplayMessage m_SysExDisplayMessageType;
+char m_SysExTextBuffer[SyxExTextBufferSize];
+u8 m_SysExPixelBuffer[SysExPixelBufferSize];
+
+// Menu state
+
+CSoundFontSynth* m_pMenuSF;
+CMT32Synth*      m_pMenuMT32;
+CSynthBase*      m_pMenuCurrentSynth;
+
+size_t  m_nMenuCursor;
+size_t  m_nMenuScroll;
+bool    m_bMenuEditing;
+
+// Cached values for menu items (float/int/bool mirrors)
+bool  m_bMenuReverbActive;
+float m_fMenuReverbRoomSize;
+float m_fMenuReverbLevel;
+bool  m_bMenuChorusActive;
+float m_fMenuChorusDepth;
+int   m_nMenuROMSet;     // MT-32 only
+int   m_nMenuSoundFont;  // SF only
 };
 
 #endif

@@ -138,6 +138,12 @@ CSoundFontSynth::CSoundFontSynth(unsigned nSampleRate)
 	  m_nVolume(100),
 	  m_nInitialGain(0.2f),
 
+	  m_bReverbActive(true),
+	  m_nReverbRoomSize(0.2f),
+	  m_nReverbLevel(0.9f),
+	  m_bChorusActive(true),
+	  m_nChorusDepth(8.0f),
+
 	  m_nPercussionMask(1 << 9),
 	  m_nCurrentSoundFontIndex(0)
 {
@@ -401,14 +407,20 @@ bool CSoundFontSynth::Reinitialize(const char* pSoundFontPath, const TFXProfile*
 	fluid_synth_set_gain(m_pSynth, m_nVolume / 100.0f * m_nInitialGain);
 
 	// Use values from effects profile if set, otherwise use defaults
-	fluid_synth_reverb_on(m_pSynth, -1, pFXProfile->bReverbActive.ValueOr(pConfig->FluidSynthDefaultReverbActive));
+	m_bReverbActive   = pFXProfile->bReverbActive.ValueOr(pConfig->FluidSynthDefaultReverbActive);
+	m_nReverbRoomSize = pFXProfile->nReverbRoomSize.ValueOr(pConfig->FluidSynthDefaultReverbRoomSize);
+	m_nReverbLevel    = pFXProfile->nReverbLevel.ValueOr(pConfig->FluidSynthDefaultReverbLevel);
+	m_bChorusActive   = pFXProfile->bChorusActive.ValueOr(pConfig->FluidSynthDefaultChorusActive);
+	m_nChorusDepth    = pFXProfile->nChorusDepth.ValueOr(pConfig->FluidSynthDefaultChorusDepth);
+
+	fluid_synth_reverb_on(m_pSynth, -1, m_bReverbActive);
 	fluid_synth_set_reverb_group_damp(m_pSynth, -1, pFXProfile->nReverbDamping.ValueOr(pConfig->FluidSynthDefaultReverbDamping));
-	fluid_synth_set_reverb_group_level(m_pSynth, -1, pFXProfile->nReverbLevel.ValueOr(pConfig->FluidSynthDefaultReverbLevel));
-	fluid_synth_set_reverb_group_roomsize(m_pSynth, -1, pFXProfile->nReverbRoomSize.ValueOr(pConfig->FluidSynthDefaultReverbRoomSize));
+	fluid_synth_set_reverb_group_level(m_pSynth, -1, m_nReverbLevel);
+	fluid_synth_set_reverb_group_roomsize(m_pSynth, -1, m_nReverbRoomSize);
 	fluid_synth_set_reverb_group_width(m_pSynth, -1, pFXProfile->nReverbWidth.ValueOr(pConfig->FluidSynthDefaultReverbWidth));
 
-	fluid_synth_chorus_on(m_pSynth, -1, pFXProfile->bChorusActive.ValueOr(pConfig->FluidSynthDefaultChorusActive));
-	fluid_synth_set_chorus_group_depth(m_pSynth, -1, pFXProfile->nChorusDepth.ValueOr(pConfig->FluidSynthDefaultChorusDepth));
+	fluid_synth_chorus_on(m_pSynth, -1, m_bChorusActive);
+	fluid_synth_set_chorus_group_depth(m_pSynth, -1, m_nChorusDepth);
 	fluid_synth_set_chorus_group_level(m_pSynth, -1, pFXProfile->nChorusLevel.ValueOr(pConfig->FluidSynthDefaultChorusLevel));
 	fluid_synth_set_chorus_group_nr(m_pSynth, -1, pFXProfile->nChorusVoices.ValueOr(pConfig->FluidSynthDefaultChorusVoices));
 	fluid_synth_set_chorus_group_speed(m_pSynth, -1, pFXProfile->nChorusSpeed.ValueOr(pConfig->FluidSynthDefaultChorusSpeed));
@@ -609,4 +621,49 @@ bool CSoundFontSynth::ParseYamahaSysEx(const u8* pData, size_t nSize)
 	}
 
 	return false;
+}
+
+void CSoundFontSynth::SetReverbActive(bool bActive)
+{
+	m_bReverbActive = bActive;
+	m_Lock.Acquire();
+	if (m_pSynth)
+		fluid_synth_reverb_on(m_pSynth, -1, bActive);
+	m_Lock.Release();
+}
+
+void CSoundFontSynth::SetReverbRoomSize(float nRoomSize)
+{
+	m_nReverbRoomSize = nRoomSize;
+	m_Lock.Acquire();
+	if (m_pSynth)
+		fluid_synth_set_reverb_group_roomsize(m_pSynth, -1, nRoomSize);
+	m_Lock.Release();
+}
+
+void CSoundFontSynth::SetReverbLevel(float nLevel)
+{
+	m_nReverbLevel = nLevel;
+	m_Lock.Acquire();
+	if (m_pSynth)
+		fluid_synth_set_reverb_group_level(m_pSynth, -1, nLevel);
+	m_Lock.Release();
+}
+
+void CSoundFontSynth::SetChorusActive(bool bActive)
+{
+	m_bChorusActive = bActive;
+	m_Lock.Acquire();
+	if (m_pSynth)
+		fluid_synth_chorus_on(m_pSynth, -1, bActive);
+	m_Lock.Release();
+}
+
+void CSoundFontSynth::SetChorusDepth(float nDepth)
+{
+	m_nChorusDepth = nDepth;
+	m_Lock.Acquire();
+	if (m_pSynth)
+		fluid_synth_set_chorus_group_depth(m_pSynth, -1, nDepth);
+	m_Lock.Release();
 }
