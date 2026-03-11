@@ -225,10 +225,14 @@ jobs:
       - name: Download GeneralUser GS SoundFont if not retrieved from cache
         if: steps.cache-generaluser-gs.outputs.cache-hit != 'true'
         run: |
-          python -m pip install --upgrade pip
+          set -e
           python -m pip install gdown
-          python -m gdown -q https://drive.google.com/uc?id=1ypgJwuHqqXx-jeCXLRFqgBAEemJZnDrj
-          unzip "GeneralUser GS v1.511.zip"
+          if python -m gdown -q https://drive.google.com/uc?id=1ypgJwuHqqXx-jeCXLRFqgBAEemJZnDrj; then
+            unzip "GeneralUser GS v1.511.zip"
+          else
+            echo "WARNING: GeneralUser GS download failed (Google Drive unavailable). Continuing without bundled SoundFont."
+            mkdir -p "GeneralUser GS v1.511"
+          fi
 
       - name: Retrieve built kernels
         uses: actions/download-artifact@v4
@@ -240,9 +244,17 @@ jobs:
       - name: Add extra files to SD card directory
         run: |
           mkdir -p sdcard/docs sdcard/soundfonts
-          cp "GeneralUser GS v1.511/GeneralUser GS v1.511.sf2" sdcard/soundfonts
-          cp "GeneralUser GS v1.511/CHANGELOG.md" sdcard/docs/CHANGELOG.GeneralUserGS
-          cp "GeneralUser GS v1.511/LICENSE.txt" sdcard/docs/LICENSE.GeneralUserGS
+          if [ -f "GeneralUser GS v1.511/GeneralUser GS v1.511.sf2" ]; then
+            cp "GeneralUser GS v1.511/GeneralUser GS v1.511.sf2" sdcard/soundfonts
+          else
+            echo "WARNING: GeneralUser GS v1.511.sf2 not found; packaging without bundled SoundFont."
+          fi
+          if [ -f "GeneralUser GS v1.511/CHANGELOG.md" ]; then
+            cp "GeneralUser GS v1.511/CHANGELOG.md" sdcard/docs/CHANGELOG.GeneralUserGS
+          fi
+          if [ -f "GeneralUser GS v1.511/LICENSE.txt" ]; then
+            cp "GeneralUser GS v1.511/LICENSE.txt" sdcard/docs/LICENSE.GeneralUserGS
+          fi
           cp LICENSE sdcard/docs
           cp README.md sdcard/docs
 
