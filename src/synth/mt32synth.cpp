@@ -23,6 +23,8 @@
 #include <circle/logger.h>
 #include <circle/timer.h>
 
+#include <cstdint>
+
 #include "config.h"
 #include "lcd/ui.h"
 #include "synth/mt32synth.h"
