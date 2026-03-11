@@ -59,8 +59,11 @@ endif
 # Improve I/O throughput
 	@echo "DEFINE += -DNO_BUSY_WAIT" >> $(CIRCLE_CONFIG)
 
-# Enable PWM audio output on GPIO 12/13 for the Pi Zero 2 W
-	@echo "DEFINE += -DUSE_PWM_AUDIO_ON_ZERO" >> $(CIRCLE_CONFIG)
+# Exclude unused USB device classes (matches circle-50-minimal-usb-drivers.patch)
+	@echo "DEFINE += -DEXCLUDE_USB_STORAGE" >> $(CIRCLE_CONFIG)
+	@echo "DEFINE += -DEXCLUDE_USB_MOUSE" >> $(CIRCLE_CONFIG)
+	@echo "DEFINE += -DEXCLUDE_USB_GAMEPAD" >> $(CIRCLE_CONFIG)
+	@echo "DEFINE += -DEXCLUDE_USB_PRINTER" >> $(CIRCLE_CONFIG)
 
 #
 # Build circle-stdlib
@@ -68,7 +71,7 @@ endif
 circle-stdlib: $(CIRCLESTDLIBHOME)/.done
 
 $(CIRCLESTDLIBHOME)/.done: $(CIRCLE_STDLIB_CONFIG)
-	@$(MAKE) -C $(CIRCLESTDLIBHOME)
+	$(MAKE) -C $(CIRCLESTDLIBHOME)
 	touch $@
 
 #
@@ -152,9 +155,8 @@ clean:
 #
 mrproper: clean
 # Reverse patches
-	@${REVERSE_PATCH} $(CIRCLEHOME) patches/circle-45-gzip-kernel.patch
-	@${REVERSE_PATCH} $(CIRCLEHOME) patches/circle-45-cp210x-remove-partnum-check.patch
-	@${REVERSE_PATCH} $(CIRCLEHOME) patches/circle-45-minimal-usb-drivers.patch
+	@${REVERSE_PATCH} $(CIRCLEHOME) patches/circle-49-minimal-usb-drivers.patch
+	@${REVERSE_PATCH} $(CIRCLEHOME) patches/circle-49-cp210x-remove-partnum-check.patch
 	@${REVERSE_PATCH} $(FLUIDSYNTHHOME) patches/fluidsynth-2.5.3-circle.patch
 
 # Clean circle-stdlib

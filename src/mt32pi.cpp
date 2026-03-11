@@ -570,7 +570,7 @@ void CMT32Pi::AudioTask()
 
 	// Extra byte so that we can write to the 24-bit buffer with overlapping 32-bit writes (efficiency)
 	float FloatBuffer[nQueueSizeFrames * nChannels];
-	s8 IntBuffer[nQueueSizeFrames * nBytesPerFrame + bI2S ? 0 : 1];
+s8 IntBuffer[nQueueSizeFrames * nBytesPerFrame + (bI2S ? 0 : 1)];
 
 	while (m_bRunning)
 	{
@@ -847,11 +847,16 @@ void CMT32Pi::UpdateNetwork()
 	if (!m_pNet)
 		return;
 
-	bool bNetIsRunning = m_pNet->IsRunning();
+	bool bNetIsRunning = false;
 	if (m_pConfig->NetworkMode == CConfig::TNetworkMode::Ethernet)
-		bNetIsRunning &= m_pNetDevice->IsLinkUp();
-	else if (m_pConfig->NetworkMode == CConfig::TNetworkMode::WiFi)
-		bNetIsRunning &= m_WPASupplicant.IsConnected();
+	{
+		if (m_pConfig->NetworkDHCP)
+			bNetIsRunning = !m_pNet->GetConfig()->GetIPAddress()->IsNull();
+		else
+			bNetIsRunning = true;
+	}
+	else
+		bNetIsRunning = m_pNet->IsRunning();
 
 	if (!m_bNetworkReady && bNetIsRunning)
 	{
