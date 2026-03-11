@@ -1,251 +1,307 @@
 name: mt32-pi CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "chore/**"
+      - "fix/**"
+      - "test/**"
+    tags:
+      - "*-ng"
+  pull_request:
+  workflow_dispatch:
 
 env:
-  toolchain-version: 11.3.rel1
-  python-version: 3.11
+  TOOLCHAIN_VERSION: 14.3.rel1
+  PYTHON_VERSION: "3.11"
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v4.5.0
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.python-version }}
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - uses: psf/black@stable
-        with:
-          options: --check --diff --preview
-          src: scripts
+      - name: Install lint dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install black isort flake8
 
-      - uses: isort/isort-action@master
-        with:
-            sortPaths: scripts
+      - name: black
+        run: black --check --diff scripts
 
-      - uses: py-actions/flake8@v2
-        with:
-          path: scripts
+      - name: isort
+        run: isort --check-only --diff scripts
 
-      - uses: ludeeus/action-shellcheck@master
-        with:
-          scandir: scripts
+      - name: flake8
+        run: flake8 scripts
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          find scripts -type f -name "*.sh" -print0 | xargs -0 -r shellcheck
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: build-${{ matrix.board }}
     strategy:
       fail-fast: false
       matrix:
         board: [pi2, pi3-64, pi4-64]
+
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-    - name: Fetch submodules
-      run: make submodules
+      - name: Fetch submodules
+        run: make submodules
 
-    - name: Setup ccache
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        key: ${{ env.toolchain-version }}-${{ matrix.board }}
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-${{ env.TOOLCHAIN_VERSION }}-${{ matrix.board }}
 
-    - name: Cache ARM toolchains
-      id: cache-toolchains
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/arm-gnu-toolchain-${{ env.toolchain-version }}-x86_64-arm-none-eabi
-          ~/arm-gnu-toolchain-${{ env.toolchain-version }}-x86_64-aarch64-none-elf
-        key: cache-arm-toolchains-${{ env.toolchain-version }}
+      - name: Cache ARM toolchains
+        id: cache-toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-arm-none-eabi
+            ~/arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-aarch64-none-elf
+          key: ${{ runner.os }}-arm-toolchains-${{ env.TOOLCHAIN_VERSION }}
 
-    - name: Install toolchains if not retrieved from cache
-      if: steps.cache-toolchains.outputs.cache-hit != 'true'
-      run: |
-        for triplet in arm-none-eabi aarch64-none-elf; do
-          wget -q https://developer.arm.com/-/media/Files/downloads/gnu/${{ env.toolchain-version }}/binrel/arm-gnu-toolchain-${{ env.toolchain-version }}-x86_64-${triplet}.tar.xz
-          tar -xf arm-gnu-toolchain-${{ env.toolchain-version }}-x86_64-${triplet}.tar.xz -C ~
-          rm arm-gnu-toolchain-${{ env.toolchain-version }}-x86_64-${triplet}.tar.xz
-        done
+      - name: Install toolchains if not retrieved from cache
+        if: steps.cache-toolchains.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          for triplet in arm-none-eabi aarch64-none-elf; do
+            wget -q https://developer.arm.com/-/media/Files/downloads/gnu/${{ env.TOOLCHAIN_VERSION }}/binrel/arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-${triplet}.tar.xz
+            tar -xf arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-${triplet}.tar.xz -C ~
+            rm arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-${triplet}.tar.xz
+          done
 
-    - name: Update PATH
-      run: |
-        mkdir ~/ccache_bin
-        for triplet in arm-none-eabi aarch64-none-elf; do
-          ln -s $(which ccache) ~/ccache_bin/${triplet}-gcc
-          ln -s $(which ccache) ~/ccache_bin/${triplet}-g++
-          echo "$HOME/ccache_bin:$HOME/arm-gnu-toolchain-${{ env.toolchain-version }}-x86_64-${triplet}/bin" >> $GITHUB_PATH
-        done
+      - name: Update PATH and ccache wrappers
+        run: |
+          set -e
+          mkdir -p ~/ccache_bin
+          for triplet in arm-none-eabi aarch64-none-elf; do
+            ln -sf "$(which ccache)" ~/ccache_bin/${triplet}-gcc
+            ln -sf "$(which ccache)" ~/ccache_bin/${triplet}-g++
+            echo "$HOME/ccache_bin:$HOME/arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-${triplet}/bin" >> "$GITHUB_PATH"
+          done
 
-    - name: Build
-      run: make -j BOARD=${{ matrix.board }}
+      - name: Build
+        run: make clean && make -j"$(nproc)" BOARD=${{ matrix.board }}
 
-    - name: Upload built kernel
-      uses: actions/upload-artifact@v3
-      with:
-        name: kernels
-        path: kernel*.img
+      - name: Collect built kernel
+        run: |
+          mkdir -p out/${{ matrix.board }}
+          cp kernel*.img out/${{ matrix.board }}/
 
-    - name: Build (HDMI console)
-      run: make clean && make -j BOARD=${{ matrix.board }} HDMI_CONSOLE=1
+      - name: Upload built kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernels-${{ matrix.board }}
+          path: out/${{ matrix.board }}/kernel*.img
 
-    - name: Upload built kernel
-      uses: actions/upload-artifact@v3
-      with:
-        name: kernels-hdmi
-        path: kernel*.img
+      - name: Build (HDMI console)
+        run: make clean && make -j"$(nproc)" BOARD=${{ matrix.board }} HDMI_CONSOLE=1
+
+      - name: Collect built kernel (HDMI)
+        run: |
+          mkdir -p out/${{ matrix.board }}-hdmi
+          cp kernel*.img out/${{ matrix.board }}-hdmi/
+
+      - name: Upload built kernel (HDMI)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernels-${{ matrix.board }}-hdmi
+          path: out/${{ matrix.board }}-hdmi/kernel*.img
 
   package:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
-      boot-home: external/circle-stdlib/libs/circle/boot
-      wlan-home: external/circle-stdlib/libs/circle/addon/wlan
+      BOOT_HOME: external/circle-stdlib/libs/circle/boot
+      WLAN_HOME: external/circle-stdlib/libs/circle/addon/wlan
 
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-    - name: Fetch submodules
-      run: make submodules
+      - name: Fetch submodules
+        run: make submodules
 
-    - name: Cache boot files
-      id: cache-boot-files
-      uses: actions/cache@v3
-      with:
-        path: |
-          sdcard/armstub8-rpi4.bin
-          sdcard/bcm2711-rpi-4-b.dtb
-          sdcard/bcm2711-rpi-400.dtb
-          sdcard/bcm2711-rpi-cm4.dtb
-          sdcard/bootcode.bin
-          sdcard/COPYING.linux
-          sdcard/fixup_cd.dat
-          sdcard/fixup4cd.dat
-          sdcard/LICENCE.broadcom
-          sdcard/start_cd.elf
-          sdcard/start4cd.elf
-        key: cache-boot-files-${{ hashFiles(join(env.boot-home, '/Makefile')) }}
+      - name: Cache ARM toolchains
+        id: cache-toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-arm-none-eabi
+            ~/arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-aarch64-none-elf
+          key: ${{ runner.os }}-arm-toolchains-${{ env.TOOLCHAIN_VERSION }}
 
-    - name: Cache WLAN firmware
-      id: cache-wlan-firmware
-      uses: actions/cache@v3
-      with:
-        path: sdcard/firmware
-        key: cache-wlan-firmware-${{ hashFiles(join(env.wlan-home, '/firmware/Makefile')) }}
+      - name: Install toolchains if not retrieved from cache
+        if: steps.cache-toolchains.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          for triplet in arm-none-eabi aarch64-none-elf; do
+            wget -q https://developer.arm.com/-/media/Files/downloads/gnu/${{ env.TOOLCHAIN_VERSION }}/binrel/arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-${triplet}.tar.xz
+            tar -xf arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-${triplet}.tar.xz -C ~
+            rm arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-${triplet}.tar.xz
+          done
 
-    - name: Cache ARM toolchains
-      if: steps.cache-boot-files.outputs.cache-hit != 'true'
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/arm-gnu-toolchain-${{ env.toolchain-version }}-x86_64-arm-none-eabi
-          ~/arm-gnu-toolchain-${{ env.toolchain-version }}-x86_64-aarch64-none-elf
-        key: cache-arm-toolchains-${{ env.toolchain-version }}
+      - name: Update PATH
+        run: |
+          for triplet in arm-none-eabi aarch64-none-elf; do
+            echo "$HOME/arm-gnu-toolchain-${{ env.TOOLCHAIN_VERSION }}-x86_64-${triplet}/bin" >> "$GITHUB_PATH"
+          done
 
-    - name: Update PATH
-      if: steps.cache-boot-files.outputs.cache-hit != 'true'
-      run: |
-        for triplet in arm-none-eabi aarch64-none-elf; do
-          echo "$HOME/arm-gnu-toolchain-${{ env.toolchain-version }}-x86_64-${triplet}/bin" >> $GITHUB_PATH
-        done
+      - name: Cache boot files
+        id: cache-boot-files
+        uses: actions/cache@v4
+        with:
+          path: |
+            sdcard/armstub8-rpi4.bin
+            sdcard/bcm2711-rpi-4-b.dtb
+            sdcard/bcm2711-rpi-400.dtb
+            sdcard/bcm2711-rpi-cm4.dtb
+            sdcard/bootcode.bin
+            sdcard/COPYING.linux
+            sdcard/fixup_cd.dat
+            sdcard/fixup4cd.dat
+            sdcard/LICENCE.broadcom
+            sdcard/start_cd.elf
+            sdcard/start4cd.elf
+          key: boot-files-${{ hashFiles('external/circle-stdlib/libs/circle/boot/Makefile') }}
 
-    - name: Download boot files and build ARM stub if not retrieved from cache
-      if: steps.cache-boot-files.outputs.cache-hit != 'true'
-      run: |
-        make -C ${{ env.boot-home }} firmware armstub64
-        cp  ${{ env.boot-home }}/armstub8-rpi4.bin \
-            ${{ env.boot-home }}/bcm2711-rpi-4-b.dtb \
-            ${{ env.boot-home }}/bcm2711-rpi-400.dtb \
-            ${{ env.boot-home }}/bcm2711-rpi-cm4.dtb \
-            ${{ env.boot-home }}/bootcode.bin \
-            ${{ env.boot-home }}/COPYING.linux \
-            ${{ env.boot-home }}/fixup_cd.dat \
-            ${{ env.boot-home }}/fixup4cd.dat \
-            ${{ env.boot-home }}/LICENCE.broadcom \
-            ${{ env.boot-home }}/start_cd.elf \
-            ${{ env.boot-home }}/start4cd.elf \
-            sdcard
+      - name: Cache WLAN firmware
+        id: cache-wlan-firmware
+        uses: actions/cache@v4
+        with:
+          path: sdcard/firmware
+          key: wlan-firmware-${{ hashFiles('external/circle-stdlib/libs/circle/addon/wlan/firmware/Makefile') }}
 
-    - name: Download WLAN firmware if not retrieved from cache
-      if: steps.cache-wlan-firmware.outputs.cache-hit != 'true'
-      run: |
-        mkdir -p sdcard/firmware
-        make -C ${{ env.wlan-home }}/firmware
-        cp  ${{ env.wlan-home }}/firmware/LICENCE.broadcom_bcm43xx \
-            ${{ env.wlan-home }}/firmware/brcmfmac43430-sdio.bin \
-            ${{ env.wlan-home }}/firmware/brcmfmac43430-sdio.txt \
-            ${{ env.wlan-home }}/firmware/brcmfmac43436-sdio.bin \
-            ${{ env.wlan-home }}/firmware/brcmfmac43436-sdio.txt \
-            ${{ env.wlan-home }}/firmware/brcmfmac43436-sdio.clm_blob \
-            ${{ env.wlan-home }}/firmware/brcmfmac43455-sdio.bin \
-            ${{ env.wlan-home }}/firmware/brcmfmac43455-sdio.txt \
-            ${{ env.wlan-home }}/firmware/brcmfmac43455-sdio.clm_blob \
-            ${{ env.wlan-home }}/firmware/brcmfmac43456-sdio.bin \
-            ${{ env.wlan-home }}/firmware/brcmfmac43456-sdio.txt \
-            ${{ env.wlan-home }}/firmware/brcmfmac43456-sdio.clm_blob \
-            sdcard/firmware
+      - name: Download boot files and build ARM stub if not retrieved from cache
+        if: steps.cache-boot-files.outputs.cache-hit != 'true'
+        run: |
+          make -C "$BOOT_HOME" firmware armstub64
+          cp "$BOOT_HOME"/armstub8-rpi4.bin \
+             "$BOOT_HOME"/bcm2711-rpi-4-b.dtb \
+             "$BOOT_HOME"/bcm2711-rpi-400.dtb \
+             "$BOOT_HOME"/bcm2711-rpi-cm4.dtb \
+             "$BOOT_HOME"/bootcode.bin \
+             "$BOOT_HOME"/COPYING.linux \
+             "$BOOT_HOME"/fixup_cd.dat \
+             "$BOOT_HOME"/fixup4cd.dat \
+             "$BOOT_HOME"/LICENCE.broadcom \
+             "$BOOT_HOME"/start_cd.elf \
+             "$BOOT_HOME"/start4cd.elf \
+             sdcard
 
-    - name: Cache GeneralUser GS SoundFont
-      id: cache-generaluser-gs
-      uses: actions/cache@v3
-      with:
-        path: GeneralUser GS v1.511
-        key: cache-generaluser-gs-1.511
+      - name: Download WLAN firmware if not retrieved from cache
+        if: steps.cache-wlan-firmware.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p sdcard/firmware
+          make -C "$WLAN_HOME/firmware"
+          cp "$WLAN_HOME"/firmware/LICENCE.broadcom_bcm43xx \
+             "$WLAN_HOME"/firmware/brcmfmac43430-sdio.bin \
+             "$WLAN_HOME"/firmware/brcmfmac43430-sdio.txt \
+             "$WLAN_HOME"/firmware/brcmfmac43436-sdio.bin \
+             "$WLAN_HOME"/firmware/brcmfmac43436-sdio.txt \
+             "$WLAN_HOME"/firmware/brcmfmac43436-sdio.clm_blob \
+             "$WLAN_HOME"/firmware/brcmfmac43455-sdio.bin \
+             "$WLAN_HOME"/firmware/brcmfmac43455-sdio.txt \
+             "$WLAN_HOME"/firmware/brcmfmac43455-sdio.clm_blob \
+             "$WLAN_HOME"/firmware/brcmfmac43456-sdio.bin \
+             "$WLAN_HOME"/firmware/brcmfmac43456-sdio.txt \
+             "$WLAN_HOME"/firmware/brcmfmac43456-sdio.clm_blob \
+             sdcard/firmware
 
-    - name: Download GeneralUser GS SoundFont if not retrieved from cache
-      if: steps.cache-generaluser-gs.outputs.cache-hit != 'true'
-      run: |
-        sudo pip install gdown
-        gdown -q https://drive.google.com/uc?id=1ypgJwuHqqXx-jeCXLRFqgBAEemJZnDrj
-        unzip "GeneralUser GS v1.511.zip"
+      - name: Cache GeneralUser GS SoundFont
+        id: cache-generaluser-gs
+        uses: actions/cache@v4
+        with:
+          path: GeneralUser GS v1.511
+          key: generaluser-gs-1.511
 
-    - name: Retrieve built kernels
-      uses: actions/download-artifact@v3
-      with:
-        name: kernels
-        path: sdcard
+      - name: Download GeneralUser GS SoundFont if not retrieved from cache
+        if: steps.cache-generaluser-gs.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install gdown
+          python -m gdown -q https://drive.google.com/uc?id=1ypgJwuHqqXx-jeCXLRFqgBAEemJZnDrj
+          unzip "GeneralUser GS v1.511.zip"
 
-    - name: Add extra files to SD card directory
-      run: |
-        mkdir sdcard/docs
-        cp "GeneralUser GS v1.511/GeneralUser GS v1.511.sf2" sdcard/soundfonts
-        cp "GeneralUser GS v1.511/CHANGELOG.md" sdcard/docs/CHANGELOG.GeneralUserGS
-        cp "GeneralUser GS v1.511/LICENSE.txt" sdcard/docs/LICENSE.GeneralUserGS
-        cp LICENSE sdcard/docs
-        cp README.md sdcard/docs
+      - name: Retrieve built kernels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kernels-*
+          merge-multiple: true
+          path: sdcard
 
-    - name: Upload SD card archive
-      uses: actions/upload-artifact@v3
-      with:
-        name: sdcard
-        path: sdcard
+      - name: Add extra files to SD card directory
+        run: |
+          mkdir -p sdcard/docs sdcard/soundfonts
+          cp "GeneralUser GS v1.511/GeneralUser GS v1.511.sf2" sdcard/soundfonts
+          cp "GeneralUser GS v1.511/CHANGELOG.md" sdcard/docs/CHANGELOG.GeneralUserGS
+          cp "GeneralUser GS v1.511/LICENSE.txt" sdcard/docs/LICENSE.GeneralUserGS
+          cp LICENSE sdcard/docs
+          cp README.md sdcard/docs
 
-    - name: Get version (git tag)
-      if: startsWith(github.ref, 'refs/tags/')
-      id: get_version
-      run: echo ::set-output name=version::${GITHUB_REF#refs/tags/v}
+      - name: Build release zip
+        id: package
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="snapshot-${GITHUB_SHA::7}"
+          fi
+          ZIP_NAME="mt32-pi-${VERSION}.zip"
+          (cd sdcard && zip -r "../${ZIP_NAME}" .)
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
 
-    - name: Create release package
-      if: startsWith(github.ref, 'refs/tags/')
-      run: cd sdcard; zip -r ../mt32-pi-${{ steps.get_version.outputs.version }}.zip *
+      - name: Upload SD card archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdcard
+          path: sdcard
 
-    - name: Release
-      uses: docker://antonyurchenko/git-release:latest
-      if: startsWith(github.ref, 'refs/tags/')
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        DRAFT_RELEASE: "false"
-        PRE_RELEASE: "false"
-        CHANGELOG_FILE: "CHANGELOG.md"
-        ALLOW_EMPTY_CHANGELOG: "false"
-      with:
-        args: |
-            mt32-pi-*.zip
+      - name: Upload release zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: ${{ steps.package.outputs.zip_name }}
 
-    - name: Notify Discord servers of release
-      if: startsWith(github.ref, 'refs/tags/')
-      run: |
-        sudo pip3 install keepachangelog discord-webhook
-        .github/scripts/discord_notify.py ${{ secrets.MISTER_DISCORD_WEBHOOK }} ${{ steps.get_version.outputs.version }}
-        .github/scripts/discord_notify.py ${{ secrets.FPGAMING_DISCORD_WEBHOOK }} ${{ steps.get_version.outputs.version }}
+  release:
+    needs: package
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && endsWith(github.ref_name, '-ng')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release zip artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: .
+
+      - name: Publish GitHub Release (fork)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          ZIP_FILE="$(ls -1 mt32-pi-*.zip | head -n 1)"
+          TAG="${GITHUB_REF_NAME}"
+          TITLE="mt32-pi ${TAG}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP_FILE" --clobber
+          else
+            gh release create "$TAG" "$ZIP_FILE" --title "$TITLE" --generate-notes
+          fi
