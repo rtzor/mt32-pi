@@ -56,6 +56,7 @@
 #include "net/applemidi.h"
 #include "net/ftpdaemon.h"
 #include "net/udpmidi.h"
+#include "net/webdaemon.h"
 #include "pisound.h"
 #include "power.h"
 #include "ringbuffer.h"
@@ -75,6 +76,21 @@ public:
 	bool Initialize(bool bSerialMIDIAvailable = true);
 
 	virtual void Run(unsigned nCore) override;
+
+	const CConfig* GetConfig() const { return m_pConfig; }
+	bool IsNetworkReady() const { return m_bNetworkReady; }
+	const char* GetNetworkInterfaceName() const { return GetNetworkDeviceShortName(); }
+	void FormatIPAddress(CString& Out) const;
+	const char* GetActiveSynthName() const;
+	const char* GetCurrentMT32ROMName() const;
+	const char* GetCurrentSoundFontName() const;
+	const char* GetCurrentSoundFontPath() const;
+	size_t GetCurrentSoundFontIndex() const;
+	size_t GetSoundFontCount() const;
+	void GetMIDIChannelLevels(float* pOutLevels, float* pOutPeaks) const;
+	void RequestReboot() { m_bRunning = false; }
+	bool HasMT32Synth() const { return m_pMT32Synth != nullptr; }
+	bool HasSoundFontSynth() const { return m_pSoundFontSynth != nullptr; }
 
 private:
 	enum class TLCDLogType
@@ -163,6 +179,7 @@ private:
 	CAppleMIDIParticipant* m_pAppleMIDIParticipant;
 	CUDPMIDIReceiver* m_pUDPMIDIReceiver;
 	CFTPDaemon* m_pFTPDaemon;
+	CWebDaemon* m_pWebDaemon;
 
 	CBcmRandomNumberGenerator m_Random;
 

@@ -84,6 +84,7 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_pAppleMIDIParticipant(nullptr),
 	  m_pUDPMIDIReceiver(nullptr),
 	  m_pFTPDaemon(nullptr),
+	  m_pWebDaemon(nullptr),
 
 	  m_pLCD(nullptr),
 	  m_nLCDUpdateTime(0),
@@ -195,6 +196,12 @@ bool CMT32Pi::Initialize(bool bSerialMIDIAvailable)
 
 	LCDLog(TLCDLogType::Startup, "Init Network");
 	InitNetwork();
+
+	if (m_pConfig->NetworkWebServer && m_pConfig->NetworkMode == CConfig::TNetworkMode::Off)
+	{
+		LOGWARN("Web server is enabled in config, but network mode is off; disabling web server");
+		m_pConfig->NetworkWebServer = false;
+	}
 
 	// Check for Blokas Pisound, but only when not using 4-bit HD44780 (GPIO pin conflict)
 	if (m_pConfig->LCDType != CConfig::TLCDType::HD44780FourBit)
@@ -409,6 +416,70 @@ bool CMT32Pi::InitSoundFontSynth()
 	m_pSoundFontSynth->SetUserInterface(&m_UserInterface);
 
 	return true;
+}
+
+void CMT32Pi::FormatIPAddress(CString& Out) const
+{
+	Out = "Unavailable";
+
+	if (!m_pNet)
+		return;
+
+	m_pNet->GetConfig()->GetIPAddress()->Format(&Out);
+}
+
+const char* CMT32Pi::GetActiveSynthName() const
+{
+	if (m_pCurrentSynth == m_pMT32Synth)
+		return "MT-32";
+	if (m_pCurrentSynth == m_pSoundFontSynth)
+		return "SoundFont";
+	return "Unavailable";
+}
+
+const char* CMT32Pi::GetCurrentMT32ROMName() const
+{
+	return m_pMT32Synth ? m_pMT32Synth->GetControlROMName() : "Unavailable";
+}
+
+const char* CMT32Pi::GetCurrentSoundFontName() const
+{
+	return m_pSoundFontSynth ? m_pSoundFontSynth->GetSoundFontManager().GetSoundFontName(m_pSoundFontSynth->GetSoundFontIndex()) : "Unavailable";
+}
+
+const char* CMT32Pi::GetCurrentSoundFontPath() const
+{
+	return m_pSoundFontSynth ? m_pSoundFontSynth->GetSoundFontManager().GetSoundFontPath(m_pSoundFontSynth->GetSoundFontIndex()) : "Unavailable";
+}
+
+size_t CMT32Pi::GetCurrentSoundFontIndex() const
+{
+	return m_pSoundFontSynth ? m_pSoundFontSynth->GetSoundFontIndex() : 0;
+}
+
+size_t CMT32Pi::GetSoundFontCount() const
+{
+	return m_pSoundFontSynth ? m_pSoundFontSynth->GetSoundFontManager().GetSoundFontCount() : 0;
+}
+
+void CMT32Pi::GetMIDIChannelLevels(float* pOutLevels, float* pOutPeaks) const
+{
+	if (!pOutLevels || !pOutPeaks)
+		return;
+
+	for (size_t nChannel = 0; nChannel < 16; ++nChannel)
+	{
+		pOutLevels[nChannel] = 0.0f;
+		pOutPeaks[nChannel] = 0.0f;
+	}
+
+	if (!m_pCurrentSynth)
+		return;
+
+	CSynthBase* const pSynth = m_pCurrentSynth;
+	pSynth->m_Lock.Acquire();
+	pSynth->m_MIDIMonitor.GetChannelLevels(CTimer::GetClockTicks(), pOutLevels, pOutPeaks);
+	pSynth->m_Lock.Release();
 }
 
 void CMT32Pi::MainTask()
@@ -905,6 +976,18 @@ void CMT32Pi::UpdateNetwork()
 			}
 			else
 				LOGNOTE("FTP daemon initialized");
+		}
+
+		if (m_pConfig->NetworkWebServer && !m_pWebDaemon)
+		{
+			const int nRequestedPort = m_pConfig->NetworkWebServerPort;
+			const int nPort = Utility::Clamp(nRequestedPort, 1, 65535);
+
+			if (nRequestedPort != nPort)
+				LOGWARN("Invalid web_port %d, clamping to %d", nRequestedPort, nPort);
+
+			m_pWebDaemon = new CWebDaemon(m_pNet, this, static_cast<u16>(nPort));
+			LOGNOTE("HTTP web daemon initialized on port %d", nPort);
 		}
 	}
 	else if (m_bNetworkReady && !bNetIsRunning)

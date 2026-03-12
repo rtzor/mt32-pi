@@ -111,6 +111,8 @@ CFG(udp_midi,			bool,				NetworkUDPMIDI,				true						)
 CFG(ftp,			bool,				NetworkFTPServer,			true						)
 CFG(ftp_username,		CString,			NetworkFTPUsername,			"mt32-pi"					)
 CFG(ftp_password,		CString,			NetworkFTPPassword,			"mt32-pi"					)
+CFG(web,			bool,				NetworkWebServer,			false						)
+CFG(web_port,			int,				NetworkWebServerPort,			80						)
 END_SECTION
 
 #undef BEGIN_SECTION
