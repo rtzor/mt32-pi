@@ -573,6 +573,189 @@ bool CMT32Pi::SetSoundFontChorusDepth(float nDepth)
 	return true;
 }
 
+// ========== MT-32 Sound Parameters ==========
+float CMT32Pi::GetMT32ReverbOutputGain() const
+{
+	if (!m_pMT32Synth)
+		return 1.0f;
+
+	return m_pMT32Synth->GetReverbOutputGain();
+}
+
+bool CMT32Pi::SetMT32ReverbOutputGain(float nGain)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	m_pMT32Synth->SetReverbOutputGain(Utility::Clamp(nGain, 0.0f, 4.0f));
+	return true;
+}
+
+bool CMT32Pi::IsMT32ReverbActive() const
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	return m_pMT32Synth->GetReverbEnabled();
+}
+
+bool CMT32Pi::SetMT32ReverbActive(bool bActive)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	m_pMT32Synth->SetReverbEnabled(bActive);
+	return true;
+}
+
+bool CMT32Pi::IsMT32NiceAmpRamp() const
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	return m_pMT32Synth->GetNiceAmpRamp();
+}
+
+bool CMT32Pi::SetMT32NiceAmpRamp(bool bEnabled)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	m_pMT32Synth->SetNiceAmpRamp(bEnabled);
+	return true;
+}
+
+bool CMT32Pi::IsMT32NicePanning() const
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	return m_pMT32Synth->GetNicePanning();
+}
+
+bool CMT32Pi::SetMT32NicePanning(bool bEnabled)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	m_pMT32Synth->SetNicePanning(bEnabled);
+	return true;
+}
+
+bool CMT32Pi::IsMT32NicePartialMixing() const
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	return m_pMT32Synth->GetNicePartialMixing();
+}
+
+bool CMT32Pi::SetMT32NicePartialMixing(bool bEnabled)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	m_pMT32Synth->SetNicePartialMixing(bEnabled);
+	return true;
+}
+
+int CMT32Pi::GetMT32DACMode() const
+{
+	if (!m_pMT32Synth)
+		return 0;
+
+	return static_cast<int>(m_pMT32Synth->GetDACInputMode());
+}
+
+bool CMT32Pi::SetMT32DACMode(int nMode)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	if (nMode < 0 || nMode > 3)
+		return false;
+
+	m_pMT32Synth->SetDACInputMode(static_cast<MT32Emu::DACInputMode>(nMode));
+	return true;
+}
+
+int CMT32Pi::GetMT32MIDIDelayMode() const
+{
+	if (!m_pMT32Synth)
+		return 0;
+
+	return static_cast<int>(m_pMT32Synth->GetMIDIDelayMode());
+}
+
+bool CMT32Pi::SetMT32MIDIDelayMode(int nMode)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	if (nMode < 0 || nMode > 2)
+		return false;
+
+	m_pMT32Synth->SetMIDIDelayMode(static_cast<MT32Emu::MIDIDelayMode>(nMode));
+	return true;
+}
+
+int CMT32Pi::GetMT32AnalogMode() const
+{
+	if (!m_pMT32Synth)
+		return 0;
+
+	return static_cast<int>(m_pMT32Synth->GetAnalogOutputMode());
+}
+
+bool CMT32Pi::SetMT32AnalogMode(int nMode)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	if (nMode < 0 || nMode > 3)
+		return false;
+
+	return m_pMT32Synth->SetAnalogOutputMode(static_cast<MT32Emu::AnalogOutputMode>(nMode));
+}
+
+int CMT32Pi::GetMT32RendererType() const
+{
+	if (!m_pMT32Synth)
+		return 0;
+
+	return static_cast<int>(m_pMT32Synth->GetRendererType());
+}
+
+bool CMT32Pi::SetMT32RendererType(int nType)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	if (nType < 0 || nType > 1)
+		return false;
+
+	return m_pMT32Synth->SetRendererType(static_cast<MT32Emu::RendererType>(nType));
+}
+
+int CMT32Pi::GetMT32PartialCount() const
+{
+	if (!m_pMT32Synth)
+		return 0;
+
+	return static_cast<int>(m_pMT32Synth->GetPartialCount());
+}
+
+bool CMT32Pi::SetMT32PartialCount(int nCount)
+{
+	if (!m_pMT32Synth)
+		return false;
+
+	if (nCount < 8 || nCount > 256)
+		return false;
+
+	return m_pMT32Synth->SetPartialCount(static_cast<u32>(nCount));
+}
+
 void CMT32Pi::GetMIDIChannelLevels(float* pOutLevels, float* pOutPeaks) const
 {
 	if (!pOutLevels || !pOutPeaks)
