@@ -86,8 +86,44 @@ public:
 	const char* GetCurrentSoundFontName() const;
 	const char* GetCurrentSoundFontPath() const;
 	size_t GetCurrentSoundFontIndex() const;
+	const char* GetSoundFontName(size_t nIndex) const;
 	size_t GetSoundFontCount() const;
+	int GetMasterVolume() const { return static_cast<int>(m_nMasterVolume); }
+	int GetMT32ROMSetIndex() const;
+	bool GetSoundFontFXState(bool& bReverbActive, float& nReverbRoomSize, float& nReverbLevel, bool& bChorusActive, float& nChorusDepth) const;
 	void GetMIDIChannelLevels(float* pOutLevels, float* pOutPeaks) const;
+	bool SetActiveSynth(TSynth Synth);
+	bool SetMT32ROMSet(TMT32ROMSet ROMSet);
+	bool SetSoundFontIndex(size_t nIndex);
+	bool SetMasterVolumePercent(int nVolume);
+	bool SetSoundFontReverbActive(bool bActive);
+	bool SetSoundFontReverbRoomSize(float nRoomSize);
+	bool SetSoundFontReverbLevel(float nLevel);
+	bool SetSoundFontChorusActive(bool bActive);
+	bool SetSoundFontChorusDepth(float nDepth);
+
+	// MT-32 Sound Parameters
+	float GetMT32ReverbOutputGain() const;
+	bool SetMT32ReverbOutputGain(float nGain);
+	bool IsMT32ReverbActive() const;
+	bool SetMT32ReverbActive(bool bActive);
+	bool IsMT32NiceAmpRamp() const;
+	bool SetMT32NiceAmpRamp(bool bEnabled);
+	bool IsMT32NicePanning() const;
+	bool SetMT32NicePanning(bool bEnabled);
+	bool IsMT32NicePartialMixing() const;
+	bool SetMT32NicePartialMixing(bool bEnabled);
+	int GetMT32DACMode() const;
+	bool SetMT32DACMode(int nMode);
+	int GetMT32MIDIDelayMode() const;
+	bool SetMT32MIDIDelayMode(int nMode);
+	int GetMT32AnalogMode() const;
+	bool SetMT32AnalogMode(int nMode);
+	int GetMT32RendererType() const;
+	bool SetMT32RendererType(int nType);
+	int GetMT32PartialCount() const;
+	bool SetMT32PartialCount(int nCount);
+	
 	void RequestReboot() { m_bRunning = false; }
 	bool HasMT32Synth() const { return m_pMT32Synth != nullptr; }
 	bool HasSoundFontSynth() const { return m_pSoundFontSynth != nullptr; }

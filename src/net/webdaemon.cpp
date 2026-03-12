@@ -26,6 +26,7 @@
 #include <circle/string.h>
 
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 
 #include <fatfs/ff.h>
@@ -345,6 +346,48 @@ namespace
 			Out += ",";
 	}
 
+	bool ParseIntStrict(const char* pText, int& nOut)
+	{
+		if (!pText || !*pText)
+			return false;
+
+		char* pEnd = nullptr;
+		const long nValue = std::strtol(pText, &pEnd, 10);
+		if (pEnd == pText)
+			return false;
+
+		while (pEnd && *pEnd)
+		{
+			if (!std::isspace(static_cast<unsigned char>(*pEnd)))
+				return false;
+			++pEnd;
+		}
+
+		nOut = static_cast<int>(nValue);
+		return true;
+	}
+
+	bool ParseFloatStrict(const char* pText, float& nOut)
+	{
+		if (!pText || !*pText)
+			return false;
+
+		char* pEnd = nullptr;
+		const float nValue = std::strtof(pText, &pEnd);
+		if (pEnd == pText)
+			return false;
+
+		while (pEnd && *pEnd)
+		{
+			if (!std::isspace(static_cast<unsigned char>(*pEnd)))
+				return false;
+			++pEnd;
+		}
+
+		nOut = nValue;
+		return true;
+	}
+
 	const char* SkipSpaces(const char* pText)
 	{
 		while (pText && *pText && std::isspace(static_cast<unsigned char>(*pText)))
@@ -644,12 +687,15 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 
 	const bool bIsIndexPath = strcmp(pPath, "/") == 0 || strcmp(pPath, "/index.html") == 0;
 	const bool bIsConfigPagePath = strcmp(pPath, "/config") == 0;
+	const bool bIsSoundPagePath = strcmp(pPath, "/sound") == 0;
 	const bool bIsStatusAPIPath = strcmp(pPath, "/api/status") == 0;
 	const bool bIsMIDIAPIPath = strcmp(pPath, "/api/midi") == 0;
  	const bool bIsConfigSavePath = strcmp(pPath, "/api/config/save") == 0;
+	const bool bIsRuntimeStatusPath = strcmp(pPath, "/api/runtime/status") == 0;
+	const bool bIsRuntimeSetPath = strcmp(pPath, "/api/runtime/set") == 0;
 	const bool bIsSystemRebootPath = strcmp(pPath, "/api/system/reboot") == 0;
 
-	if (!bIsIndexPath && !bIsConfigPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsSystemRebootPath)
+	if (!bIsIndexPath && !bIsConfigPagePath && !bIsSoundPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsRuntimeStatusPath && !bIsRuntimeSetPath && !bIsSystemRebootPath)
 		return HTTPNotFound;
 
 	if (!m_pMT32Pi)
@@ -821,6 +867,235 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		return HTTPOK;
 	}
 
+	if (bIsRuntimeSetPath)
+	{
+		if (!pFormData || !*pFormData)
+			return HTTPBadRequest;
+
+		char Param[64];
+		char Value[128];
+		if (!GetFormValue(pFormData, "param", Param, sizeof(Param))
+		 || !GetFormValue(pFormData, "value", Value, sizeof(Value)))
+		{
+			return HTTPBadRequest;
+		}
+
+		bool bApplied = false;
+		if (std::strcmp(Param, "active_synth") == 0)
+		{
+			if (std::strcmp(Value, "mt32") == 0)
+				bApplied = m_pMT32Pi->SetActiveSynth(TSynth::MT32);
+			else if (std::strcmp(Value, "soundfont") == 0)
+				bApplied = m_pMT32Pi->SetActiveSynth(TSynth::SoundFont);
+		}
+		else if (std::strcmp(Param, "mt32_rom_set") == 0)
+		{
+			if (std::strcmp(Value, "mt32_old") == 0)
+				bApplied = m_pMT32Pi->SetMT32ROMSet(TMT32ROMSet::MT32Old);
+			else if (std::strcmp(Value, "mt32_new") == 0)
+				bApplied = m_pMT32Pi->SetMT32ROMSet(TMT32ROMSet::MT32New);
+			else if (std::strcmp(Value, "cm32l") == 0)
+				bApplied = m_pMT32Pi->SetMT32ROMSet(TMT32ROMSet::CM32L);
+		}
+		else if (std::strcmp(Param, "soundfont_index") == 0)
+		{
+			int nIndex = 0;
+			if (ParseIntStrict(Value, nIndex) && nIndex >= 0)
+				bApplied = m_pMT32Pi->SetSoundFontIndex(static_cast<size_t>(nIndex));
+		}
+		else if (std::strcmp(Param, "master_volume") == 0)
+		{
+			int nVolume = 0;
+			if (ParseIntStrict(Value, nVolume))
+				bApplied = m_pMT32Pi->SetMasterVolumePercent(nVolume);
+		}
+		else if (std::strcmp(Param, "sf_reverb_active") == 0)
+		{
+			bool bEnabled = false;
+			if (CConfig::ParseOption(Value, &bEnabled))
+				bApplied = m_pMT32Pi->SetSoundFontReverbActive(bEnabled);
+		}
+		else if (std::strcmp(Param, "sf_reverb_room") == 0)
+		{
+			float nRoom = 0.0f;
+			if (ParseFloatStrict(Value, nRoom))
+				bApplied = m_pMT32Pi->SetSoundFontReverbRoomSize(nRoom);
+		}
+		else if (std::strcmp(Param, "sf_reverb_level") == 0)
+		{
+			float nLevel = 0.0f;
+			if (ParseFloatStrict(Value, nLevel))
+				bApplied = m_pMT32Pi->SetSoundFontReverbLevel(nLevel);
+		}
+		else if (std::strcmp(Param, "sf_chorus_active") == 0)
+		{
+			bool bEnabled = false;
+			if (CConfig::ParseOption(Value, &bEnabled))
+				bApplied = m_pMT32Pi->SetSoundFontChorusActive(bEnabled);
+		}
+		else if (std::strcmp(Param, "sf_chorus_depth") == 0)
+		{
+			float nDepth = 0.0f;
+			if (ParseFloatStrict(Value, nDepth))
+				bApplied = m_pMT32Pi->SetSoundFontChorusDepth(nDepth);
+		}
+		// MT-32 Parameters
+		else if (std::strcmp(Param, "mt32_reverb_gain") == 0)
+		{
+			float nGain = 0.0f;
+			if (ParseFloatStrict(Value, nGain))
+				bApplied = m_pMT32Pi->SetMT32ReverbOutputGain(nGain);
+		}
+		else if (std::strcmp(Param, "mt32_reverb_active") == 0)
+		{
+			bool bEnabled = false;
+			if (CConfig::ParseOption(Value, &bEnabled))
+				bApplied = m_pMT32Pi->SetMT32ReverbActive(bEnabled);
+		}
+		else if (std::strcmp(Param, "mt32_nice_amp") == 0)
+		{
+			bool bEnabled = false;
+			if (CConfig::ParseOption(Value, &bEnabled))
+				bApplied = m_pMT32Pi->SetMT32NiceAmpRamp(bEnabled);
+		}
+		else if (std::strcmp(Param, "mt32_nice_pan") == 0)
+		{
+			bool bEnabled = false;
+			if (CConfig::ParseOption(Value, &bEnabled))
+				bApplied = m_pMT32Pi->SetMT32NicePanning(bEnabled);
+		}
+		else if (std::strcmp(Param, "mt32_nice_mix") == 0)
+		{
+			bool bEnabled = false;
+			if (CConfig::ParseOption(Value, &bEnabled))
+				bApplied = m_pMT32Pi->SetMT32NicePartialMixing(bEnabled);
+		}
+		else if (std::strcmp(Param, "mt32_dac_mode") == 0)
+		{
+			int nMode = 0;
+			if (ParseIntStrict(Value, nMode))
+				bApplied = m_pMT32Pi->SetMT32DACMode(nMode);
+		}
+		else if (std::strcmp(Param, "mt32_midi_delay") == 0)
+		{
+			int nMode = 0;
+			if (ParseIntStrict(Value, nMode))
+				bApplied = m_pMT32Pi->SetMT32MIDIDelayMode(nMode);
+		}
+		else if (std::strcmp(Param, "mt32_analog_mode") == 0)
+		{
+			int nMode = 0;
+			if (ParseIntStrict(Value, nMode))
+				bApplied = m_pMT32Pi->SetMT32AnalogMode(nMode);
+		}
+		else if (std::strcmp(Param, "mt32_renderer_type") == 0)
+		{
+			int nType = 0;
+			if (ParseIntStrict(Value, nType))
+				bApplied = m_pMT32Pi->SetMT32RendererType(nType);
+		}
+		else if (std::strcmp(Param, "mt32_partial_count") == 0)
+		{
+			int nCount = 0;
+			if (ParseIntStrict(Value, nCount))
+				bApplied = m_pMT32Pi->SetMT32PartialCount(nCount);
+		}
+
+		bool bReverbActive = false;
+		float nReverbRoom = 0.0f;
+		float nReverbLevel = 0.0f;
+		bool bChorusActive = false;
+		float nChorusDepth = 0.0f;
+		const bool bHasSoundFontFX = m_pMT32Pi->GetSoundFontFXState(bReverbActive, nReverbRoom, nReverbLevel, bChorusActive, nChorusDepth);
+
+		CString JSON;
+		JSON += "{";
+		AppendJSONPairBool(JSON, "ok", bApplied);
+		AppendJSONPair(JSON, "active_synth", m_pMT32Pi->GetActiveSynthName());
+		AppendJSONPair(JSON, "mt32_rom_name", m_pMT32Pi->GetCurrentMT32ROMName());
+		AppendJSONPair(JSON, "soundfont_name", m_pMT32Pi->GetCurrentSoundFontName());
+		AppendJSONPairInt(JSON, "mt32_rom_set", m_pMT32Pi->GetMT32ROMSetIndex());
+		AppendJSONPairInt(JSON, "soundfont_index", static_cast<int>(m_pMT32Pi->GetCurrentSoundFontIndex()));
+		AppendJSONPairInt(JSON, "soundfont_count", static_cast<int>(m_pMT32Pi->GetSoundFontCount()));
+		AppendJSONPairInt(JSON, "master_volume", m_pMT32Pi->GetMasterVolume());
+		AppendJSONPairBool(JSON, "sf_available", bHasSoundFontFX);
+		AppendJSONPairBool(JSON, "sf_reverb_active", bHasSoundFontFX ? bReverbActive : false);
+		AppendJSONPairFloat(JSON, "sf_reverb_room", bHasSoundFontFX ? nReverbRoom : 0.0f);
+		AppendJSONPairFloat(JSON, "sf_reverb_level", bHasSoundFontFX ? nReverbLevel : 0.0f);
+		AppendJSONPairBool(JSON, "sf_chorus_active", bHasSoundFontFX ? bChorusActive : false);
+		AppendJSONPairFloat(JSON, "sf_chorus_depth", bHasSoundFontFX ? nChorusDepth : 0.0f);
+		
+		// MT-32 parameters
+		AppendJSONPairFloat(JSON, "mt32_reverb_gain", m_pMT32Pi->GetMT32ReverbOutputGain());
+		AppendJSONPairBool(JSON, "mt32_reverb_active", m_pMT32Pi->IsMT32ReverbActive());
+		AppendJSONPairBool(JSON, "mt32_nice_amp", m_pMT32Pi->IsMT32NiceAmpRamp());
+		AppendJSONPairBool(JSON, "mt32_nice_pan", m_pMT32Pi->IsMT32NicePanning());
+		AppendJSONPairBool(JSON, "mt32_nice_mix", m_pMT32Pi->IsMT32NicePartialMixing());
+		AppendJSONPairInt(JSON, "mt32_dac_mode", m_pMT32Pi->GetMT32DACMode());
+		AppendJSONPairInt(JSON, "mt32_midi_delay", m_pMT32Pi->GetMT32MIDIDelayMode());
+		AppendJSONPairInt(JSON, "mt32_analog_mode", m_pMT32Pi->GetMT32AnalogMode());
+		AppendJSONPairInt(JSON, "mt32_renderer_type", m_pMT32Pi->GetMT32RendererType());
+		AppendJSONPairInt(JSON, "mt32_partial_count", m_pMT32Pi->GetMT32PartialCount(), false);
+		JSON += "}";
+
+		const unsigned nBodyLength = JSON.GetLength();
+		if (*pLength < nBodyLength)
+			return HTTPInternalServerError;
+
+		memcpy(pBuffer, static_cast<const char*>(JSON), nBodyLength);
+		*pLength = nBodyLength;
+		*ppContentType = "application/json; charset=utf-8";
+		return bApplied ? HTTPOK : HTTPBadRequest;
+	}
+
+	if (bIsRuntimeStatusPath)
+	{
+		bool bReverbActive = false;
+		float nReverbRoom = 0.0f;
+		float nReverbLevel = 0.0f;
+		bool bChorusActive = false;
+		float nChorusDepth = 0.0f;
+		const bool bHasSoundFontFX = m_pMT32Pi->GetSoundFontFXState(bReverbActive, nReverbRoom, nReverbLevel, bChorusActive, nChorusDepth);
+
+		CString JSON;
+		JSON += "{";
+		AppendJSONPair(JSON, "active_synth", m_pMT32Pi->GetActiveSynthName());
+		AppendJSONPair(JSON, "mt32_rom_name", m_pMT32Pi->GetCurrentMT32ROMName());
+		AppendJSONPair(JSON, "soundfont_name", m_pMT32Pi->GetCurrentSoundFontName());
+		AppendJSONPairInt(JSON, "mt32_rom_set", m_pMT32Pi->GetMT32ROMSetIndex());
+		AppendJSONPairInt(JSON, "soundfont_index", static_cast<int>(m_pMT32Pi->GetCurrentSoundFontIndex()));
+		AppendJSONPairInt(JSON, "soundfont_count", static_cast<int>(m_pMT32Pi->GetSoundFontCount()));
+		AppendJSONPairInt(JSON, "master_volume", m_pMT32Pi->GetMasterVolume());
+		AppendJSONPairBool(JSON, "sf_available", bHasSoundFontFX);
+		AppendJSONPairBool(JSON, "sf_reverb_active", bHasSoundFontFX ? bReverbActive : false);
+		AppendJSONPairFloat(JSON, "sf_reverb_room", bHasSoundFontFX ? nReverbRoom : 0.0f);
+		AppendJSONPairFloat(JSON, "sf_reverb_level", bHasSoundFontFX ? nReverbLevel : 0.0f);
+		AppendJSONPairBool(JSON, "sf_chorus_active", bHasSoundFontFX ? bChorusActive : false);
+		AppendJSONPairFloat(JSON, "sf_chorus_depth", bHasSoundFontFX ? nChorusDepth : 0.0f);
+		
+		// MT-32 parameters
+		AppendJSONPairFloat(JSON, "mt32_reverb_gain", m_pMT32Pi->GetMT32ReverbOutputGain());
+		AppendJSONPairBool(JSON, "mt32_reverb_active", m_pMT32Pi->IsMT32ReverbActive());
+		AppendJSONPairBool(JSON, "mt32_nice_amp", m_pMT32Pi->IsMT32NiceAmpRamp());
+		AppendJSONPairBool(JSON, "mt32_nice_pan", m_pMT32Pi->IsMT32NicePanning());
+		AppendJSONPairBool(JSON, "mt32_nice_mix", m_pMT32Pi->IsMT32NicePartialMixing());
+		AppendJSONPairInt(JSON, "mt32_dac_mode", m_pMT32Pi->GetMT32DACMode());
+		AppendJSONPairInt(JSON, "mt32_midi_delay", m_pMT32Pi->GetMT32MIDIDelayMode());
+		AppendJSONPairInt(JSON, "mt32_analog_mode", m_pMT32Pi->GetMT32AnalogMode());
+		AppendJSONPairInt(JSON, "mt32_renderer_type", m_pMT32Pi->GetMT32RendererType());
+		AppendJSONPairInt(JSON, "mt32_partial_count", m_pMT32Pi->GetMT32PartialCount(), false);
+		JSON += "}";
+
+		const unsigned nBodyLength = JSON.GetLength();
+		if (*pLength < nBodyLength)
+			return HTTPInternalServerError;
+
+		memcpy(pBuffer, static_cast<const char*>(JSON), nBodyLength);
+		*pLength = nBodyLength;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
 	if (bIsStatusAPIPath)
 	{
 		CString IPAddress;
@@ -848,6 +1123,217 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		memcpy(pBuffer, static_cast<const char*>(JSON), nBodyLength);
 		*pLength = nBodyLength;
 		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	if (bIsSoundPagePath)
+	{
+		CString HTML;
+		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
+		HTML += "<title>mt32-pi sound</title><style>";
+		HTML += "body{font:14px/1.45 system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0;}";
+		HTML += "main{max-width:1000px;margin:0 auto;padding:24px;}h1{margin:0 0 8px;}h2{font-size:18px;margin:0 0 12px;}";
+		HTML += "p{margin:0 0 16px;color:#94a3b8;}section{background:#111827;border:1px solid #334155;border-radius:14px;padding:16px;margin-bottom:14px;}";
+		HTML += ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;}label{display:flex;flex-direction:column;gap:4px;color:#cbd5e1;}";
+		HTML += "input,select,button{background:#0b1220;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px;}";
+		HTML += "input:disabled,select:disabled{opacity:.45;cursor:not-allowed;}a{color:#93c5fd;}nav{display:flex;gap:12px;margin:0 0 16px;}.statusbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px;}.pill{background:#0b1220;border:1px solid #334155;border-radius:999px;padding:10px 12px;color:#cbd5e1;}.tabbar{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px;}.tabbtn{background:#0b1220;color:#cbd5e1;border:1px solid #334155;border-radius:999px;padding:10px 14px;cursor:pointer;}.tabbtn.active{background:#1d4ed8;border-color:#1d4ed8;color:#fff;}.section-hidden{display:none;}.meter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;max-width:100%;}.meter{display:flex;align-items:center;gap:8px;min-width:0;}.meter-label{width:32px;flex:0 0 32px;color:#93c5fd;font-size:12px;}.meter-bar{position:relative;flex:1;min-width:0;height:10px;background:#0b1220;border:1px solid #334155;border-radius:999px;overflow:hidden;}.meter-fill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#22d3ee,#4ade80,#facc15,#f97316);width:0%;}.meter-peak{position:absolute;top:-1px;bottom:-1px;width:2px;background:#f8fafc;left:0%;}@media (max-width: 860px){.meter-grid{grid-template-columns:1fr;}}";
+		HTML += "</style></head><body><main>";
+
+		const bool bMT32Active = std::strcmp(m_pMT32Pi->GetActiveSynthName(), "MT-32") == 0;
+		const int nROMSetIndex = m_pMT32Pi->GetMT32ROMSetIndex();
+		const int nMasterVolume = m_pMT32Pi->GetMasterVolume();
+		const size_t nCurrentSoundFontIndex = m_pMT32Pi->GetCurrentSoundFontIndex();
+		const size_t nSoundFontCount = m_pMT32Pi->GetSoundFontCount();
+		bool bReverbActive = false;
+		float nReverbRoom = 0.0f;
+		float nReverbLevel = 0.0f;
+		bool bChorusActive = false;
+		float nChorusDepth = 0.0f;
+		const bool bHasSoundFontFX = m_pMT32Pi->GetSoundFontFXState(bReverbActive, nReverbRoom, nReverbLevel, bChorusActive, nChorusDepth);
+
+		// MT-32 Sound Parameters
+		float fMT32ReverbGain = m_pMT32Pi->GetMT32ReverbOutputGain();
+		bool bMT32ReverbActive = m_pMT32Pi->IsMT32ReverbActive();
+		bool bMT32NiceAmp = m_pMT32Pi->IsMT32NiceAmpRamp();
+		bool bMT32NicePan = m_pMT32Pi->IsMT32NicePanning();
+		bool bMT32NiceMix = m_pMT32Pi->IsMT32NicePartialMixing();
+		int nMT32DACMode = m_pMT32Pi->GetMT32DACMode();
+		int nMT32MIDIDelay = m_pMT32Pi->GetMT32MIDIDelayMode();
+		int nMT32AnalogMode = m_pMT32Pi->GetMT32AnalogMode();
+		int nMT32RendererType = m_pMT32Pi->GetMT32RendererType();
+		int nMT32PartialCount = m_pMT32Pi->GetMT32PartialCount();
+
+		CString MasterVolume; MasterVolume.Format("%d", nMasterVolume);
+		CString ReverbRoom; ReverbRoom.Format("%.1f", bHasSoundFontFX ? nReverbRoom : 0.0f);
+		CString ReverbLevel; ReverbLevel.Format("%.1f", bHasSoundFontFX ? nReverbLevel : 0.0f);
+		CString ChorusDepth; ChorusDepth.Format("%.0f", bHasSoundFontFX ? nChorusDepth : 0.0f);
+
+		HTML += "<h1>Control de sonido</h1><p>Ajustes en vivo para los motores de sintesis y efectos, sin reiniciar.</p>";
+		HTML += "<nav><a href='/'>Estado</a><a href='/config'>Configuracion</a></nav>";
+		HTML += "<div class='statusbar'><div class='pill'>Motor activo: <strong id='rt_active_synth_label'>";
+		AppendEscaped(HTML, m_pMT32Pi->GetActiveSynthName());
+		HTML += "</strong></div><div class='pill'>ROM MT-32: <strong id='rt_mt32_rom_name'>";
+		AppendEscaped(HTML, m_pMT32Pi->GetCurrentMT32ROMName());
+		HTML += "</strong></div><div class='pill'>SoundFont: <strong id='rt_soundfont_name'>";
+		AppendEscaped(HTML, m_pMT32Pi->GetCurrentSoundFontName());
+		HTML += "</strong></div></div>";
+		HTML += "<div class='tabbar'><button class='tabbtn";
+		HTML += bMT32Active ? " active" : "";
+		HTML += "' type='button' id='tab-mt32'>MT-32</button><button class='tabbtn";
+		HTML += !bMT32Active ? " active" : "";
+		HTML += "' type='button' id='tab-sf'>SoundFont</button></div>";
+		HTML += "<section><h2>Motor y banco</h2><div class='grid'>";
+		HTML += "<label>Sintetizador activo<select id='rt_active_synth'><option value='mt32'";
+		HTML += SelectedAttr(bMT32Active);
+		HTML += ">MT-32</option><option value='soundfont'";
+		HTML += SelectedAttr(!bMT32Active);
+		HTML += ">SoundFont</option></select></label>";
+		HTML += "<label>Volumen master <input id='rt_master_volume' type='range' min='0' max='100' step='1' value='";
+		AppendEscaped(HTML, MasterVolume);
+		HTML += "'><span id='rt_master_volume_val'>";
+		AppendEscaped(HTML, MasterVolume);
+		HTML += "</span></label>";
+		HTML += "</div></section>";
+
+		CString MT32ReverbGain; MT32ReverbGain.Format("%.2f", fMT32ReverbGain);
+		CString MT32PartialCount; MT32PartialCount.Format("%d", nMT32PartialCount);
+		
+		HTML += "<section id='mt32-section'><h2>MT-32</h2><div class='grid'>";
+		HTML += "<label>ROM set MT-32<select id='rt_mt32_rom_set'><option value='mt32_old'";
+		HTML += SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::MT32Old));
+		HTML += ">MT-32 old</option><option value='mt32_new'";
+		HTML += SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::MT32New));
+		HTML += ">MT-32 new</option><option value='cm32l'";
+		HTML += SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::CM32L));
+		HTML += ">CM-32L</option></select></label>";
+		HTML += "<label>ROM actual<input value='";
+		AppendEscaped(HTML, m_pMT32Pi->GetCurrentMT32ROMName());
+		HTML += "' disabled></label>";
+		HTML += "<label>Reverb gain <input id='rt_mt32_reverb_gain' type='range' min='0' max='4' step='0.2' value='";
+		AppendEscaped(HTML, MT32ReverbGain);
+		HTML += "'><span id='rt_mt32_reverb_gain_val'>";
+		AppendEscaped(HTML, MT32ReverbGain);
+		HTML += "</span></label>";
+		HTML += "<label>Reverb<select id='rt_mt32_reverb_active'><option value='off'";
+		HTML += SelectedAttr(!bMT32ReverbActive);
+		HTML += ">off</option><option value='on'";
+		HTML += SelectedAttr(bMT32ReverbActive);
+		HTML += ">on</option></select></label>";
+		HTML += "<label>Nice Amp<select id='rt_mt32_nice_amp'><option value='off'";
+		HTML += SelectedAttr(!bMT32NiceAmp);
+		HTML += ">off</option><option value='on'";
+		HTML += SelectedAttr(bMT32NiceAmp);
+		HTML += ">on</option></select></label>";
+		HTML += "<label>Nice Pan<select id='rt_mt32_nice_pan'><option value='off'";
+		HTML += SelectedAttr(!bMT32NicePan);
+		HTML += ">off</option><option value='on'";
+		HTML += SelectedAttr(bMT32NicePan);
+		HTML += ">on</option></select></label>";
+		HTML += "<label>Nice Mix<select id='rt_mt32_nice_mix'><option value='off'";
+		HTML += SelectedAttr(!bMT32NiceMix);
+		HTML += ">off</option><option value='on'";
+		HTML += SelectedAttr(bMT32NiceMix);
+		HTML += ">on</option></select></label>";
+		HTML += "<label>DAC<select id='rt_mt32_dac_mode'><option value='0'";
+		HTML += SelectedAttr(nMT32DACMode == 0);
+		HTML += ">NICE</option><option value='1'";
+		HTML += SelectedAttr(nMT32DACMode == 1);
+		HTML += ">PURE</option><option value='2'";
+		HTML += SelectedAttr(nMT32DACMode == 2);
+		HTML += ">GEN1</option><option value='3'";
+		HTML += SelectedAttr(nMT32DACMode == 3);
+		HTML += ">GEN2</option></select></label>";
+		HTML += "<label>MIDI Delay<select id='rt_mt32_midi_delay'><option value='0'";
+		HTML += SelectedAttr(nMT32MIDIDelay == 0);
+		HTML += ">IMMD</option><option value='1'";
+		HTML += SelectedAttr(nMT32MIDIDelay == 1);
+		HTML += ">SHORT</option><option value='2'";
+		HTML += SelectedAttr(nMT32MIDIDelay == 2);
+		HTML += ">ALL</option></select></label>";
+		HTML += "<label>Analog<select id='rt_mt32_analog_mode'><option value='0'";
+		HTML += SelectedAttr(nMT32AnalogMode == 0);
+		HTML += ">DIG</option><option value='1'";
+		HTML += SelectedAttr(nMT32AnalogMode == 1);
+		HTML += ">COARSE</option><option value='2'";
+		HTML += SelectedAttr(nMT32AnalogMode == 2);
+		HTML += ">ACCUR</option><option value='3'";
+		HTML += SelectedAttr(nMT32AnalogMode == 3);
+		HTML += ">OVR</option></select></label>";
+		HTML += "<label>Renderer<select id='rt_mt32_renderer_type'><option value='0'";
+		HTML += SelectedAttr(nMT32RendererType == 0);
+		HTML += ">I16</option><option value='1'";
+		HTML += SelectedAttr(nMT32RendererType == 1);
+		HTML += ">F32</option></select></label>";
+		HTML += "<label>Partials <input id='rt_mt32_partial_count' type='number' min='8' max='256' value='";
+		AppendEscaped(HTML, MT32PartialCount);
+		HTML += "'></label>";
+		HTML += "</div></section>";
+
+		HTML += "<section id='sf-section'><h2>SoundFont</h2><div class='grid'>";
+		HTML += "<label>SoundFont<select id='rt_soundfont_index'>";
+		for (size_t i = 0; i < nSoundFontCount; ++i)
+		{
+			CString Index; Index.Format("%d", static_cast<int>(i));
+			HTML += "<option value='";
+			HTML += Index;
+			HTML += "'";
+			HTML += SelectedAttr(i == nCurrentSoundFontIndex);
+			HTML += ">";
+			const char* pSoundFontName = m_pMT32Pi->GetSoundFontName(i);
+			AppendEscaped(HTML, pSoundFontName ? pSoundFontName : "(sin nombre)");
+			HTML += "</option>";
+		}
+		if (nSoundFontCount == 0)
+			HTML += "<option value='0'>No SoundFonts</option>";
+		HTML += "</select></label>";
+		HTML += "</div></section>";
+
+		HTML += "<section id='sf-fx-section'><h2>Efectos SoundFont</h2><div class='grid'>";
+		HTML += "<label>Reverb<select id='rt_sf_reverb_active'><option value='off'";
+		HTML += SelectedAttr(!bReverbActive);
+		HTML += ">off</option><option value='on'";
+		HTML += SelectedAttr(bReverbActive);
+		HTML += ">on</option></select></label>";
+		HTML += "<label>Reverb room <input id='rt_sf_reverb_room' type='range' min='0' max='1' step='0.1' value='";
+		AppendEscaped(HTML, ReverbRoom);
+		HTML += "'><span id='rt_sf_reverb_room_val'>";
+		AppendEscaped(HTML, ReverbRoom);
+		HTML += "</span></label>";
+		HTML += "<label>Reverb level <input id='rt_sf_reverb_level' type='range' min='0' max='1' step='0.1' value='";
+		AppendEscaped(HTML, ReverbLevel);
+		HTML += "'><span id='rt_sf_reverb_level_val'>";
+		AppendEscaped(HTML, ReverbLevel);
+		HTML += "</span></label>";
+		HTML += "<label>Chorus<select id='rt_sf_chorus_active'><option value='off'";
+		HTML += SelectedAttr(!bChorusActive);
+		HTML += ">off</option><option value='on'";
+		HTML += SelectedAttr(bChorusActive);
+		HTML += ">on</option></select></label>";
+		HTML += "<label>Chorus depth <input id='rt_sf_chorus_depth' type='range' min='0' max='20' step='1' value='";
+		AppendEscaped(HTML, ChorusDepth);
+		HTML += "'><span id='rt_sf_chorus_depth_val'>";
+		AppendEscaped(HTML, ChorusDepth);
+		HTML += "</span></label>";
+		HTML += "</div><div id='rtStatus' style='margin-top:10px;color:#86efac;'></div></section>";
+		HTML += "<section><h2>Actividad MIDI en vivo</h2><p>Monitor del motor activo.</p><div class='pill' id='midi-status'>Cargando...</div><div class='meter-grid' id='midi-grid' style='margin-top:12px;'></div></section>";
+		HTML += "<script>const rs=document.getElementById('rtStatus');const ms=document.getElementById('midi-status');const mg=document.getElementById('midi-grid');for(let i=1;i<=16;i++){const row=document.createElement('div');row.className='meter';row.innerHTML='<span class=\"meter-label\">CH'+String(i).padStart(2,'0')+'</span><div class=\"meter-bar\"><div class=\"meter-fill\" id=\"fill-'+i+'\"></div><div class=\"meter-peak\" id=\"peak-'+i+'\"></div></div>';mg.appendChild(row);}const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};const setDisabled=(id,b)=>{const e=document.getElementById(id);if(e)e.disabled=!!b;};const setSectionHidden=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('section-hidden',!!b);};const setTabActive=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',!!b);};";
+		HTML += "const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':'soundfont';const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setSectionHidden('sf-fx-section',!sf);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);};";
+		HTML += "const rtRefresh=async()=>{try{const r=await fetch('/api/runtime/status',{cache:'no-store'});if(!r.ok)throw new Error('http');const j=await r.json();applyRuntimeState(j);}catch(err){if(rs)rs.textContent='Error leyendo estado runtime';}};";
+		HTML += "const rtApply=async(param,value)=>{if(!rs)return;rs.textContent='Aplicando...';const body=new URLSearchParams({param,value:String(value)});try{const r=await fetch('/api/runtime/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();if(!r.ok||!j.ok){rs.textContent='No se pudo aplicar '+param;return;}applyRuntimeState(j);rs.textContent='Aplicado: '+param;}catch(err){rs.textContent='Error aplicando '+param;}};";
+		HTML += "const midiRefresh=async()=>{try{const r=await fetch('/api/midi',{cache:'no-store'});if(!r.ok)throw new Error('http');const d=await r.json();ms.textContent='Motor activo: '+d.active_synth+' | actualizado';for(const ch of d.channels){const i=ch.channel;const lv=Math.max(0,Math.min(1,ch.level||0));const pk=Math.max(0,Math.min(1,ch.peak||0));document.getElementById('fill-'+i).style.width=(lv*100).toFixed(1)+'%';document.getElementById('peak-'+i).style.left=(pk*100).toFixed(1)+'%';}}catch(err){ms.textContent='Error leyendo /api/midi';}};";
+		HTML += "const bindChange=(id,param)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('change',()=>rtApply(param,el.value));};const bindRange=(id,param,formatter)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('input',()=>{if(formatter)formatter(el.value);});el.addEventListener('change',()=>rtApply(param,el.value));};";
+		HTML += "const tabMT32=document.getElementById('tab-mt32');if(tabMT32)tabMT32.addEventListener('click',()=>rtApply('active_synth','mt32'));const tabSF=document.getElementById('tab-sf');if(tabSF)tabSF.addEventListener('click',()=>rtApply('active_synth','soundfont'));";
+		HTML += "bindChange('rt_active_synth','active_synth');bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');bindChange('rt_mt32_reverb_active','mt32_reverb_active');bindChange('rt_mt32_nice_amp','mt32_nice_amp');bindChange('rt_mt32_nice_pan','mt32_nice_pan');bindChange('rt_mt32_nice_mix','mt32_nice_mix');bindChange('rt_mt32_dac_mode','mt32_dac_mode');bindChange('rt_mt32_midi_delay','mt32_midi_delay');bindChange('rt_mt32_analog_mode','mt32_analog_mode');bindChange('rt_mt32_renderer_type','mt32_renderer_type');bindChange('rt_mt32_partial_count','mt32_partial_count');";
+		HTML += "bindRange('rt_master_volume','master_volume',(v)=>setText('rt_master_volume_val',v));bindRange('rt_sf_reverb_room','sf_reverb_room',(v)=>setText('rt_sf_reverb_room_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_level','sf_reverb_level',(v)=>setText('rt_sf_reverb_level_val',Number(v).toFixed(1)));bindRange('rt_sf_chorus_depth','sf_chorus_depth',(v)=>setText('rt_sf_chorus_depth_val',Math.round(Number(v))));bindRange('rt_mt32_reverb_gain','mt32_reverb_gain',(v)=>setText('rt_mt32_reverb_gain_val',Number(v).toFixed(2)));rtRefresh();midiRefresh();setInterval(rtRefresh,3000);setInterval(midiRefresh,300);</script>";
+		HTML += "</main></body></html>";
+
+		const unsigned nBodyLength = HTML.GetLength();
+		if (*pLength < nBodyLength)
+			return HTTPInternalServerError;
+
+		memcpy(pBuffer, static_cast<const char*>(HTML), nBodyLength);
+		*pLength = nBodyLength;
+		*ppContentType = "text/html; charset=utf-8";
 		return HTTPOK;
 	}
 
@@ -943,8 +1429,10 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += "</div></section>";
 
 		HTML += "<button class='primary' type='submit'>Guardar config</button> <button class='warn' type='button' id='rebootBtn'>Reiniciar Pi</button> <span id='status'></span>";
-		HTML += "</form><p><a href='/'>Volver al estado</a></p>";
-		HTML += "<script>const f=document.getElementById('cfgForm');const s=document.getElementById('status');const rb=document.getElementById('rebootBtn');f.addEventListener('submit',async(e)=>{e.preventDefault();s.textContent='Guardando...';const body=new URLSearchParams(new FormData(f));try{const r=await fetch('/api/config/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();s.textContent=j.message||'OK';}catch(err){s.textContent='Error guardando config';}});rb.addEventListener('click',async()=>{if(!confirm('Reiniciar mt32-pi ahora?'))return;try{await fetch('/api/system/reboot',{method:'POST'});s.textContent='Reinicio solicitado';}catch(err){s.textContent='Error solicitando reinicio';}});</script>";
+		HTML += "</form><p><a href='/'>Volver al estado</a> · <a href='/sound'>Ir a sonido</a></p>";
+		HTML += "<script>const f=document.getElementById('cfgForm');const s=document.getElementById('status');const rb=document.getElementById('rebootBtn');";
+		HTML += "f.addEventListener('submit',async(e)=>{e.preventDefault();s.textContent='Guardando...';const body=new URLSearchParams(new FormData(f));try{const r=await fetch('/api/config/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();s.textContent=j.message||'OK';}catch(err){s.textContent='Error guardando config';}});";
+		HTML += "rb.addEventListener('click',async()=>{if(!confirm('Reiniciar mt32-pi ahora?'))return;try{await fetch('/api/system/reboot',{method:'POST'});s.textContent='Reinicio solicitado';}catch(err){s.textContent='Error solicitando reinicio';}});</script>";
 		HTML += "</main></body></html>";
 
 		const unsigned nBodyLength = HTML.GetLength();
@@ -1027,7 +1515,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		AppendEscaped(HTML, IPAddress);
 	HTML += "</div><div class='pill'>Synth activo: ";
 		AppendEscaped(HTML, m_pMT32Pi->GetActiveSynthName());
-	HTML += "</div><div class='pill'>Web: /health</div><div class='pill'><a href='/config'>Config editor</a></div></div><div class='grid'>";
+	HTML += "</div><div class='pill'>Web: /health</div><div class='pill'><a href='/config'>Config editor</a></div><div class='pill'><a href='/sound'>Sound control</a></div></div><div class='grid'>";
 
 	AppendSectionStart(HTML, "Sistema");
 	AppendRow(HTML, "Synth activo", m_pMT32Pi->GetActiveSynthName());
