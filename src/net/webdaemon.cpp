@@ -687,13 +687,14 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 
 	const bool bIsIndexPath = strcmp(pPath, "/") == 0 || strcmp(pPath, "/index.html") == 0;
 	const bool bIsConfigPagePath = strcmp(pPath, "/config") == 0;
+	const bool bIsSoundPagePath = strcmp(pPath, "/sound") == 0;
 	const bool bIsStatusAPIPath = strcmp(pPath, "/api/status") == 0;
 	const bool bIsMIDIAPIPath = strcmp(pPath, "/api/midi") == 0;
  	const bool bIsConfigSavePath = strcmp(pPath, "/api/config/save") == 0;
 	const bool bIsRuntimeSetPath = strcmp(pPath, "/api/runtime/set") == 0;
 	const bool bIsSystemRebootPath = strcmp(pPath, "/api/system/reboot") == 0;
 
-	if (!bIsIndexPath && !bIsConfigPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsRuntimeSetPath && !bIsSystemRebootPath)
+	if (!bIsIndexPath && !bIsConfigPagePath && !bIsSoundPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsRuntimeSetPath && !bIsSystemRebootPath)
 		return HTTPNotFound;
 
 	if (!m_pMT32Pi)
@@ -1001,21 +1002,18 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		return HTTPOK;
 	}
 
-	if (bIsConfigPagePath)
+	if (bIsSoundPagePath)
 	{
 		CString HTML;
 		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
-		HTML += "<title>mt32-pi config</title><style>";
+		HTML += "<title>mt32-pi sound</title><style>";
 		HTML += "body{font:14px/1.45 system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0;}";
 		HTML += "main{max-width:1000px;margin:0 auto;padding:24px;}h1{margin:0 0 8px;}h2{font-size:18px;margin:0 0 12px;}";
 		HTML += "p{margin:0 0 16px;color:#94a3b8;}section{background:#111827;border:1px solid #334155;border-radius:14px;padding:16px;margin-bottom:14px;}";
 		HTML += ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;}label{display:flex;flex-direction:column;gap:4px;color:#cbd5e1;}";
 		HTML += "input,select,button{background:#0b1220;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px;}";
-		HTML += "button{cursor:pointer;}button.primary{background:#1d4ed8;border-color:#1d4ed8;}button.warn{background:#7f1d1d;border-color:#7f1d1d;}";
-		HTML += "#status{margin-top:10px;color:#93c5fd;}a{color:#93c5fd;}";
+		HTML += "a{color:#93c5fd;}nav{display:flex;gap:12px;margin:0 0 16px;}";
 		HTML += "</style></head><body><main>";
-		HTML += "<h1>Configurar mt32-pi</h1><p>Guarda cambios en <code>mt32-pi.cfg</code> y crea copia de seguridad <code>mt32-pi.cfg.bak</code>.</p>";
-		HTML += "<form id='cfgForm'>";
 
 		const bool bMT32Active = std::strcmp(m_pMT32Pi->GetActiveSynthName(), "MT-32") == 0;
 		const int nROMSetIndex = m_pMT32Pi->GetMT32ROMSetIndex();
@@ -1034,13 +1032,14 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		CString ReverbLevel; ReverbLevel.Format("%.1f", bHasSoundFontFX ? nReverbLevel : 0.0f);
 		CString ChorusDepth; ChorusDepth.Format("%.0f", bHasSoundFontFX ? nChorusDepth : 0.0f);
 
-		HTML += "<section><h2>Control en vivo</h2><p>Cambios instantaneos, sin reiniciar.</p><div class='grid'>";
+		HTML += "<h1>Control de sonido</h1><p>Ajustes en vivo para los motores de sintesis y efectos, sin reiniciar.</p>";
+		HTML += "<nav><a href='/'>Estado</a><a href='/config'>Configuracion</a></nav>";
+		HTML += "<section><h2>Motor y banco</h2><div class='grid'>";
 		HTML += "<label>Sintetizador activo<select id='rt_active_synth'><option value='mt32'";
 		HTML += SelectedAttr(bMT32Active);
 		HTML += ">MT-32</option><option value='soundfont'";
 		HTML += SelectedAttr(!bMT32Active);
 		HTML += ">SoundFont</option></select></label>";
-
 		HTML += "<label>ROM set MT-32<select id='rt_mt32_rom_set'><option value='mt32_old'";
 		HTML += SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::MT32Old));
 		HTML += ">MT-32 old</option><option value='mt32_new'";
@@ -1048,7 +1047,6 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += ">MT-32 new</option><option value='cm32l'";
 		HTML += SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::CM32L));
 		HTML += ">CM-32L</option></select></label>";
-
 		HTML += "<label>SoundFont<select id='rt_soundfont_index'>";
 		for (size_t i = 0; i < nSoundFontCount; ++i)
 		{
@@ -1065,43 +1063,72 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		if (nSoundFontCount == 0)
 			HTML += "<option value='0'>No SoundFonts</option>";
 		HTML += "</select></label>";
-
 		HTML += "<label>Volumen master <input id='rt_master_volume' type='range' min='0' max='100' step='1' value='";
 		AppendEscaped(HTML, MasterVolume);
 		HTML += "'><span id='rt_master_volume_val'>";
 		AppendEscaped(HTML, MasterVolume);
 		HTML += "</span></label>";
+		HTML += "</div></section>";
 
+		HTML += "<section><h2>Efectos SoundFont</h2><div class='grid'>";
 		HTML += "<label>Reverb<select id='rt_sf_reverb_active'><option value='off'";
 		HTML += SelectedAttr(!bReverbActive);
 		HTML += ">off</option><option value='on'";
 		HTML += SelectedAttr(bReverbActive);
 		HTML += ">on</option></select></label>";
-
 		HTML += "<label>Reverb room <input id='rt_sf_reverb_room' type='range' min='0' max='1' step='0.1' value='";
 		AppendEscaped(HTML, ReverbRoom);
 		HTML += "'><span id='rt_sf_reverb_room_val'>";
 		AppendEscaped(HTML, ReverbRoom);
 		HTML += "</span></label>";
-
 		HTML += "<label>Reverb level <input id='rt_sf_reverb_level' type='range' min='0' max='1' step='0.1' value='";
 		AppendEscaped(HTML, ReverbLevel);
 		HTML += "'><span id='rt_sf_reverb_level_val'>";
 		AppendEscaped(HTML, ReverbLevel);
 		HTML += "</span></label>";
-
 		HTML += "<label>Chorus<select id='rt_sf_chorus_active'><option value='off'";
 		HTML += SelectedAttr(!bChorusActive);
 		HTML += ">off</option><option value='on'";
 		HTML += SelectedAttr(bChorusActive);
 		HTML += ">on</option></select></label>";
-
 		HTML += "<label>Chorus depth <input id='rt_sf_chorus_depth' type='range' min='0' max='20' step='1' value='";
 		AppendEscaped(HTML, ChorusDepth);
 		HTML += "'><span id='rt_sf_chorus_depth_val'>";
 		AppendEscaped(HTML, ChorusDepth);
 		HTML += "</span></label>";
 		HTML += "</div><div id='rtStatus' style='margin-top:10px;color:#86efac;'></div></section>";
+		HTML += "<script>const rs=document.getElementById('rtStatus');const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};";
+		HTML += "const rtApply=async(param,value)=>{if(!rs)return;rs.textContent='Aplicando...';const body=new URLSearchParams({param,value:String(value)});try{const r=await fetch('/api/runtime/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();if(!r.ok||!j.ok){rs.textContent='No se pudo aplicar '+param;return;}rs.textContent='Aplicado: '+param;setText('rt_master_volume_val',j.master_volume);setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));}catch(err){rs.textContent='Error aplicando '+param;}};";
+		HTML += "const bindChange=(id,param)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('change',()=>rtApply(param,el.value));};const bindRange=(id,param,formatter)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('input',()=>{if(formatter)formatter(el.value);});el.addEventListener('change',()=>rtApply(param,el.value));};";
+		HTML += "bindChange('rt_active_synth','active_synth');bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');";
+		HTML += "bindRange('rt_master_volume','master_volume',(v)=>setText('rt_master_volume_val',v));bindRange('rt_sf_reverb_room','sf_reverb_room',(v)=>setText('rt_sf_reverb_room_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_level','sf_reverb_level',(v)=>setText('rt_sf_reverb_level_val',Number(v).toFixed(1)));bindRange('rt_sf_chorus_depth','sf_chorus_depth',(v)=>setText('rt_sf_chorus_depth_val',Math.round(Number(v))));</script>";
+		HTML += "</main></body></html>";
+
+		const unsigned nBodyLength = HTML.GetLength();
+		if (*pLength < nBodyLength)
+			return HTTPInternalServerError;
+
+		memcpy(pBuffer, static_cast<const char*>(HTML), nBodyLength);
+		*pLength = nBodyLength;
+		*ppContentType = "text/html; charset=utf-8";
+		return HTTPOK;
+	}
+
+	if (bIsConfigPagePath)
+	{
+		CString HTML;
+		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
+		HTML += "<title>mt32-pi config</title><style>";
+		HTML += "body{font:14px/1.45 system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0;}";
+		HTML += "main{max-width:1000px;margin:0 auto;padding:24px;}h1{margin:0 0 8px;}h2{font-size:18px;margin:0 0 12px;}";
+		HTML += "p{margin:0 0 16px;color:#94a3b8;}section{background:#111827;border:1px solid #334155;border-radius:14px;padding:16px;margin-bottom:14px;}";
+		HTML += ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;}label{display:flex;flex-direction:column;gap:4px;color:#cbd5e1;}";
+		HTML += "input,select,button{background:#0b1220;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px;}";
+		HTML += "button{cursor:pointer;}button.primary{background:#1d4ed8;border-color:#1d4ed8;}button.warn{background:#7f1d1d;border-color:#7f1d1d;}";
+		HTML += "#status{margin-top:10px;color:#93c5fd;}a{color:#93c5fd;}";
+		HTML += "</style></head><body><main>";
+		HTML += "<h1>Configurar mt32-pi</h1><p>Guarda cambios en <code>mt32-pi.cfg</code> y crea copia de seguridad <code>mt32-pi.cfg.bak</code>.</p>";
+		HTML += "<form id='cfgForm'>";
 
 		HTML += "<section><h2>Sistema y control</h2><div class='grid'>";
 		HTML += "<label>Default synth<select name='default_synth'>";
@@ -1179,22 +1206,8 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += "</div></section>";
 
 		HTML += "<button class='primary' type='submit'>Guardar config</button> <button class='warn' type='button' id='rebootBtn'>Reiniciar Pi</button> <span id='status'></span>";
-		HTML += "</form><p><a href='/'>Volver al estado</a></p>";
-		HTML += "<script>const f=document.getElementById('cfgForm');const s=document.getElementById('status');const rb=document.getElementById('rebootBtn');const rs=document.getElementById('rtStatus');";
-		HTML += "const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};";
-		HTML += "const rtApply=async(param,value)=>{if(!rs)return;rs.textContent='Aplicando...';const body=new URLSearchParams({param,value:String(value)});";
-		HTML += "try{const r=await fetch('/api/runtime/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});";
-		HTML += "const j=await r.json();if(!r.ok||!j.ok){rs.textContent='No se pudo aplicar '+param;return;}";
-		HTML += "rs.textContent='Aplicado: '+param;setText('rt_master_volume_val',j.master_volume);";
-		HTML += "setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));";
-		HTML += "}catch(err){rs.textContent='Error aplicando '+param;}};";
-		HTML += "const bindChange=(id,param)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('change',()=>rtApply(param,el.value));};";
-		HTML += "const bindRange=(id,param,formatter)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('input',()=>{if(formatter)formatter(el.value);});el.addEventListener('change',()=>rtApply(param,el.value));};";
-		HTML += "bindChange('rt_active_synth','active_synth');bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');";
-		HTML += "bindRange('rt_master_volume','master_volume',(v)=>setText('rt_master_volume_val',v));";
-		HTML += "bindRange('rt_sf_reverb_room','sf_reverb_room',(v)=>setText('rt_sf_reverb_room_val',Number(v).toFixed(1)));";
-		HTML += "bindRange('rt_sf_reverb_level','sf_reverb_level',(v)=>setText('rt_sf_reverb_level_val',Number(v).toFixed(1)));";
-		HTML += "bindRange('rt_sf_chorus_depth','sf_chorus_depth',(v)=>setText('rt_sf_chorus_depth_val',Math.round(Number(v))));";
+		HTML += "</form><p><a href='/'>Volver al estado</a> · <a href='/sound'>Ir a sonido</a></p>";
+		HTML += "<script>const f=document.getElementById('cfgForm');const s=document.getElementById('status');const rb=document.getElementById('rebootBtn');";
 		HTML += "f.addEventListener('submit',async(e)=>{e.preventDefault();s.textContent='Guardando...';const body=new URLSearchParams(new FormData(f));try{const r=await fetch('/api/config/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();s.textContent=j.message||'OK';}catch(err){s.textContent='Error guardando config';}});";
 		HTML += "rb.addEventListener('click',async()=>{if(!confirm('Reiniciar mt32-pi ahora?'))return;try{await fetch('/api/system/reboot',{method:'POST'});s.textContent='Reinicio solicitado';}catch(err){s.textContent='Error solicitando reinicio';}});</script>";
 		HTML += "</main></body></html>";
@@ -1279,7 +1292,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		AppendEscaped(HTML, IPAddress);
 	HTML += "</div><div class='pill'>Synth activo: ";
 		AppendEscaped(HTML, m_pMT32Pi->GetActiveSynthName());
-	HTML += "</div><div class='pill'>Web: /health</div><div class='pill'><a href='/config'>Config editor</a></div></div><div class='grid'>";
+	HTML += "</div><div class='pill'>Web: /health</div><div class='pill'><a href='/config'>Config editor</a></div><div class='pill'><a href='/sound'>Sound control</a></div></div><div class='grid'>";
 
 	AppendSectionStart(HTML, "Sistema");
 	AppendRow(HTML, "Synth activo", m_pMT32Pi->GetActiveSynthName());
