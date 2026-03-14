@@ -115,23 +115,18 @@ void CMIDIMixer::HandleMIDISysExMessage(const u8* pData, size_t nSize)
 	CSynthBase* pSynths[MIDIChannelCount + 1];
 	size_t nUnique = 0;
 
-	// Helper to add a synth pointer only if not already in the list.
-	#define ADD_UNIQUE(p)                                         \
-		do {                                                      \
-			CSynthBase* _p = (p);                                 \
-			if (_p) {                                             \
-				bool _found = false;                              \
-				for (size_t _i = 0; _i < nUnique; ++_i)          \
-					if (pSynths[_i] == _p) { _found = true; break; } \
-				if (!_found) pSynths[nUnique++] = _p;            \
-			}                                                     \
-		} while (0)
+	auto addUnique = [&](CSynthBase* p) {
+		if (!p)
+			return;
+		for (size_t i = 0; i < nUnique; ++i)
+			if (pSynths[i] == p)
+				return;
+		pSynths[nUnique++] = p;
+	};
 
-	ADD_UNIQUE(m_pDefaultSynth);
+	addUnique(m_pDefaultSynth);
 	for (size_t i = 0; i < MIDIChannelCount; ++i)
-		ADD_UNIQUE(m_pChannelMap[i]);
-
-	#undef ADD_UNIQUE
+		addUnique(m_pChannelMap[i]);
 
 	m_Lock.Release();
 

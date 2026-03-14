@@ -47,8 +47,8 @@ public:
 	CSynthBase(unsigned int nSampleRate)
 		: m_Lock(TASK_LEVEL),
 		  m_nSampleRate(nSampleRate),
-		  m_AudioOutput(TSynthAudioOutput::PWM),
-		  m_pUI(nullptr)
+		  m_pUI(nullptr),
+		  m_AudioOutput(TSynthAudioOutput::PWM)
 	{
 	}
 
@@ -76,6 +76,8 @@ public:
 	CUserInterface* m_pUI;
 
 private:
+	// Stored last so that the explicitly-initialised public members above are
+	// initialised in declaration order before this one.
 	TSynthAudioOutput m_AudioOutput;
 };
 
