@@ -60,6 +60,7 @@
 #include "pisound.h"
 #include "power.h"
 #include "ringbuffer.h"
+#include "synth/midimixer.h"
 #include "synth/mt32romset.h"
 #include "synth/mt32synth.h"
 #include "synth/soundfontsynth.h"
@@ -128,6 +129,18 @@ public:
 	bool HasMT32Synth() const { return m_pMT32Synth != nullptr; }
 	bool HasSoundFontSynth() const { return m_pSoundFontSynth != nullptr; }
 
+	// MIDI Mixer API
+	bool GetMixerEnabled() const;
+	bool SetMixerEnabled(bool bEnabled);
+	// Returns the synth index (0=MT-32, 1=SoundFont, -1=default/unassigned) for a MIDI channel.
+	int GetMixerChannelSynth(u8 nChannel) const;
+	// Assigns a MIDI channel to a synth (nSynthIndex: 0=MT-32, 1=SoundFont, -1=default).
+	bool SetMixerChannelSynth(u8 nChannel, int nSynthIndex);
+
+	// Per-synthesizer audio output
+	TSynthAudioOutput GetSynthAudioOutput(TSynth eSynth) const;
+	bool SetSynthAudioOutput(TSynth eSynth, TSynthAudioOutput eOutput);
+
 private:
 	enum class TLCDLogType
 	{
@@ -164,6 +177,9 @@ private:
 	bool InitNetwork();
 	bool InitMT32Synth();
 	bool InitSoundFontSynth();
+
+	// Helper: convert the config audio device enum to TSynthAudioOutput
+	static TSynthAudioOutput ConfigAudioOutputToSynth(CConfig::TAudioOutputDevice eDevice);
 
 	// Tasks for specific CPU cores
 	void MainTask();
@@ -256,6 +272,10 @@ private:
 
 	// Audio output
 	CSoundBaseDevice* m_pSound;
+	// Second audio output used when the two synthesizers are routed to
+	// different hardware devices (e.g. MT-32 on I2S, SoundFont on HDMI).
+	// nullptr when both synthesizers share m_pSound.
+	CSoundBaseDevice* m_pSound2;
 
 	// Extra devices
 	CPisound* m_pPisound;
@@ -265,6 +285,9 @@ private:
 	CSynthBase* m_pCurrentSynth;
 	CMT32Synth* m_pMT32Synth;
 	CSoundFontSynth* m_pSoundFontSynth;
+
+	// MIDI channel mixer
+	CMIDIMixer m_MIDIMixer;
 
 	// Menu long-press tracking
 	bool m_bMenuLongPressConsumed;

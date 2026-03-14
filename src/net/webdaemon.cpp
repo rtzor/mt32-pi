@@ -694,8 +694,10 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	const bool bIsRuntimeStatusPath = strcmp(pPath, "/api/runtime/status") == 0;
 	const bool bIsRuntimeSetPath = strcmp(pPath, "/api/runtime/set") == 0;
 	const bool bIsSystemRebootPath = strcmp(pPath, "/api/system/reboot") == 0;
+	const bool bIsMixerStatusPath = strcmp(pPath, "/api/mixer/status") == 0;
+	const bool bIsMixerSetPath = strcmp(pPath, "/api/mixer/set") == 0;
 
-	if (!bIsIndexPath && !bIsConfigPagePath && !bIsSoundPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsRuntimeStatusPath && !bIsRuntimeSetPath && !bIsSystemRebootPath)
+	if (!bIsIndexPath && !bIsConfigPagePath && !bIsSoundPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsRuntimeStatusPath && !bIsRuntimeSetPath && !bIsSystemRebootPath && !bIsMixerStatusPath && !bIsMixerSetPath)
 		return HTTPNotFound;
 
 	if (!m_pMT32Pi)
@@ -1048,6 +1050,119 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		return bApplied ? HTTPOK : HTTPBadRequest;
 	}
 
+	// ---- Mixer status: GET /api/mixer/status ----
+	if (bIsMixerStatusPath)
+	{
+		CString JSON;
+		JSON += "{";
+		AppendJSONPairBool(JSON, "mixer_enabled", m_pMT32Pi->GetMixerEnabled());
+
+		// Per-channel synth assignment array
+		JSON += "\"channels\":[";
+		for (u8 nCh = 0; nCh < 16; ++nCh)
+		{
+			if (nCh > 0)
+				JSON += ",";
+			JSON += "{";
+			AppendJSONPairInt(JSON, "channel", static_cast<int>(nCh));
+			AppendJSONPairInt(JSON, "synth", m_pMT32Pi->GetMixerChannelSynth(nCh), false);
+			JSON += "}";
+		}
+		JSON += "],";
+
+		// Per-synth audio output
+		const int nMT32Out  = static_cast<int>(m_pMT32Pi->GetSynthAudioOutput(TSynth::MT32));
+		const int nSFOut    = static_cast<int>(m_pMT32Pi->GetSynthAudioOutput(TSynth::SoundFont));
+		AppendJSONPairInt(JSON, "mt32_audio_output", nMT32Out);
+		AppendJSONPairInt(JSON, "sf_audio_output",   nSFOut,  false);
+		JSON += "}";
+
+		const unsigned nBodyLength = JSON.GetLength();
+		if (*pLength < nBodyLength)
+			return HTTPInternalServerError;
+
+		memcpy(pBuffer, static_cast<const char*>(JSON), nBodyLength);
+		*pLength = nBodyLength;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- Mixer set: POST /api/mixer/set ----
+	if (bIsMixerSetPath)
+	{
+		if (!pFormData || !*pFormData)
+			return HTTPBadRequest;
+
+		char Param[64];
+		char Value[128];
+		if (!GetFormValue(pFormData, "param", Param, sizeof(Param))
+		 || !GetFormValue(pFormData, "value", Value, sizeof(Value)))
+		{
+			return HTTPBadRequest;
+		}
+
+		bool bApplied = false;
+
+		if (std::strcmp(Param, "mixer_enabled") == 0)
+		{
+			bool bEnabled = false;
+			if (CConfig::ParseOption(Value, &bEnabled))
+				bApplied = m_pMT32Pi->SetMixerEnabled(bEnabled);
+		}
+		else if (std::strncmp(Param, "channel_synth_", 14) == 0)
+		{
+			// param = "channel_synth_N"  (N = 0–15)
+			int nChannel = 0;
+			if (ParseIntStrict(Param + 14, nChannel) && nChannel >= 0 && nChannel < 16)
+			{
+				int nSynthIndex = 0;
+				if (ParseIntStrict(Value, nSynthIndex))
+					bApplied = m_pMT32Pi->SetMixerChannelSynth(static_cast<u8>(nChannel), nSynthIndex);
+			}
+		}
+		else if (std::strcmp(Param, "mt32_audio_output") == 0)
+		{
+			int nOut = 0;
+			if (ParseIntStrict(Value, nOut) && nOut >= 0 && nOut <= 2)
+				bApplied = m_pMT32Pi->SetSynthAudioOutput(TSynth::MT32, static_cast<TSynthAudioOutput>(nOut));
+		}
+		else if (std::strcmp(Param, "sf_audio_output") == 0)
+		{
+			int nOut = 0;
+			if (ParseIntStrict(Value, nOut) && nOut >= 0 && nOut <= 2)
+				bApplied = m_pMT32Pi->SetSynthAudioOutput(TSynth::SoundFont, static_cast<TSynthAudioOutput>(nOut));
+		}
+
+		// Return updated mixer state
+		CString JSON;
+		JSON += "{";
+		AppendJSONPairBool(JSON, "ok", bApplied);
+		AppendJSONPairBool(JSON, "mixer_enabled", m_pMT32Pi->GetMixerEnabled());
+		JSON += "\"channels\":[";
+		for (u8 nCh = 0; nCh < 16; ++nCh)
+		{
+			if (nCh > 0)
+				JSON += ",";
+			JSON += "{";
+			AppendJSONPairInt(JSON, "channel", static_cast<int>(nCh));
+			AppendJSONPairInt(JSON, "synth", m_pMT32Pi->GetMixerChannelSynth(nCh), false);
+			JSON += "}";
+		}
+		JSON += "],";
+		AppendJSONPairInt(JSON, "mt32_audio_output", static_cast<int>(m_pMT32Pi->GetSynthAudioOutput(TSynth::MT32)));
+		AppendJSONPairInt(JSON, "sf_audio_output",   static_cast<int>(m_pMT32Pi->GetSynthAudioOutput(TSynth::SoundFont)), false);
+		JSON += "}";
+
+		const unsigned nBodyLength = JSON.GetLength();
+		if (*pLength < nBodyLength)
+			return HTTPInternalServerError;
+
+		memcpy(pBuffer, static_cast<const char*>(JSON), nBodyLength);
+		*pLength = nBodyLength;
+		*ppContentType = "application/json; charset=utf-8";
+		return bApplied ? HTTPOK : HTTPBadRequest;
+	}
+
 	if (bIsRuntimeStatusPath)
 	{
 		bool bReverbActive = false;
@@ -1315,6 +1430,32 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		AppendEscaped(HTML, ChorusDepth);
 		HTML += "</span></label>";
 		HTML += "</div><div id='rtStatus' style='margin-top:10px;color:#86efac;'></div></section>";
+
+		// Mixer section
+		const bool bMixerEnabled = m_pMT32Pi->GetMixerEnabled();
+		const int nMT32AudioOut = static_cast<int>(m_pMT32Pi->GetSynthAudioOutput(TSynth::MT32));
+		const int nSFAudioOut   = static_cast<int>(m_pMT32Pi->GetSynthAudioOutput(TSynth::SoundFont));
+		HTML += "<section id='mixer-section'><h2>Mezclador MIDI</h2>";
+		HTML += "<p>Cuando el mezclador est&aacute; activo puedes asignar cada canal MIDI (0&#8209;15) a un sintetizador diferente. Selecciona tambi&eacute;n la salida de audio para cada motor.</p>";
+		HTML += "<div class='grid'>";
+		HTML += "<label>Mezclador MIDI<select id='mx_enabled'>";
+		HTML += "<option value='off'"; HTML += SelectedAttr(!bMixerEnabled); HTML += ">Desactivado (todo al motor activo)</option>";
+		HTML += "<option value='on'";  HTML += SelectedAttr(bMixerEnabled);  HTML += ">Activado (enrutamiento por canal)</option>";
+		HTML += "</select></label>";
+		HTML += "<label>Salida de audio MT&#8209;32<select id='mx_mt32_out'>";
+		HTML += "<option value='0'"; HTML += SelectedAttr(nMT32AudioOut == 0); HTML += ">PWM</option>";
+		HTML += "<option value='1'"; HTML += SelectedAttr(nMT32AudioOut == 1); HTML += ">HDMI</option>";
+		HTML += "<option value='2'"; HTML += SelectedAttr(nMT32AudioOut == 2); HTML += ">I2S</option>";
+		HTML += "</select></label>";
+		HTML += "<label>Salida de audio SoundFont<select id='mx_sf_out'>";
+		HTML += "<option value='0'"; HTML += SelectedAttr(nSFAudioOut == 0); HTML += ">PWM</option>";
+		HTML += "<option value='1'"; HTML += SelectedAttr(nSFAudioOut == 1); HTML += ">HDMI</option>";
+		HTML += "<option value='2'"; HTML += SelectedAttr(nSFAudioOut == 2); HTML += ">I2S</option>";
+		HTML += "</select></label>";
+		HTML += "</div>";
+		HTML += "<div id='mixer-ch-grid' style='margin-top:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;'></div>";
+		HTML += "<div id='mxStatus' style='margin-top:8px;color:#86efac;'></div></section>";
+
 		HTML += "<section><h2>Actividad MIDI en vivo</h2><p>Monitor del motor activo.</p><div class='pill' id='midi-status'>Cargando...</div><div class='meter-grid' id='midi-grid' style='margin-top:12px;'></div></section>";
 		HTML += "<script>const rs=document.getElementById('rtStatus');const ms=document.getElementById('midi-status');const mg=document.getElementById('midi-grid');for(let i=1;i<=16;i++){const row=document.createElement('div');row.className='meter';row.innerHTML='<span class=\"meter-label\">CH'+String(i).padStart(2,'0')+'</span><div class=\"meter-bar\"><div class=\"meter-fill\" id=\"fill-'+i+'\"></div><div class=\"meter-peak\" id=\"peak-'+i+'\"></div></div>';mg.appendChild(row);}const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};const setDisabled=(id,b)=>{const e=document.getElementById(id);if(e)e.disabled=!!b;};const setSectionHidden=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('section-hidden',!!b);};const setTabActive=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',!!b);};";
 		HTML += "const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':'soundfont';const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setSectionHidden('sf-fx-section',!sf);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);};";
@@ -1324,7 +1465,17 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += "const bindChange=(id,param)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('change',()=>rtApply(param,el.value));};const bindRange=(id,param,formatter)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('input',()=>{if(formatter)formatter(el.value);});el.addEventListener('change',()=>rtApply(param,el.value));};";
 		HTML += "const tabMT32=document.getElementById('tab-mt32');if(tabMT32)tabMT32.addEventListener('click',()=>rtApply('active_synth','mt32'));const tabSF=document.getElementById('tab-sf');if(tabSF)tabSF.addEventListener('click',()=>rtApply('active_synth','soundfont'));";
 		HTML += "bindChange('rt_active_synth','active_synth');bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');bindChange('rt_mt32_reverb_active','mt32_reverb_active');bindChange('rt_mt32_nice_amp','mt32_nice_amp');bindChange('rt_mt32_nice_pan','mt32_nice_pan');bindChange('rt_mt32_nice_mix','mt32_nice_mix');bindChange('rt_mt32_dac_mode','mt32_dac_mode');bindChange('rt_mt32_midi_delay','mt32_midi_delay');bindChange('rt_mt32_analog_mode','mt32_analog_mode');bindChange('rt_mt32_renderer_type','mt32_renderer_type');bindChange('rt_mt32_partial_count','mt32_partial_count');";
-		HTML += "bindRange('rt_master_volume','master_volume',(v)=>setText('rt_master_volume_val',v));bindRange('rt_sf_reverb_room','sf_reverb_room',(v)=>setText('rt_sf_reverb_room_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_level','sf_reverb_level',(v)=>setText('rt_sf_reverb_level_val',Number(v).toFixed(1)));bindRange('rt_sf_chorus_depth','sf_chorus_depth',(v)=>setText('rt_sf_chorus_depth_val',Math.round(Number(v))));bindRange('rt_mt32_reverb_gain','mt32_reverb_gain',(v)=>setText('rt_mt32_reverb_gain_val',Number(v).toFixed(2)));rtRefresh();midiRefresh();setInterval(rtRefresh,3000);setInterval(midiRefresh,300);</script>";
+		HTML += "bindRange('rt_master_volume','master_volume',(v)=>setText('rt_master_volume_val',v));bindRange('rt_sf_reverb_room','sf_reverb_room',(v)=>setText('rt_sf_reverb_room_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_level','sf_reverb_level',(v)=>setText('rt_sf_reverb_level_val',Number(v).toFixed(1)));bindRange('rt_sf_chorus_depth','sf_chorus_depth',(v)=>setText('rt_sf_chorus_depth_val',Math.round(Number(v))));bindRange('rt_mt32_reverb_gain','mt32_reverb_gain',(v)=>setText('rt_mt32_reverb_gain_val',Number(v).toFixed(2)));";
+		// Mixer JS
+		HTML += "const mxStatus=document.getElementById('mxStatus');const mxGrid=document.getElementById('mixer-ch-grid');";
+		HTML += "const mxApply=async(param,value)=>{if(!mxStatus)return;mxStatus.textContent='Aplicando...';const body=new URLSearchParams({param,value:String(value)});try{const r=await fetch('/api/mixer/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();if(!r.ok||!j.ok){mxStatus.textContent='Error: '+param;return;}applyMixerState(j);mxStatus.textContent='OK: '+param;}catch(err){mxStatus.textContent='Error aplicando '+param;}};";
+		HTML += "const synthLabels=['MT-32','SoundFont','Default'];";
+		HTML += "const applyMixerState=(j)=>{const en=document.getElementById('mx_enabled');if(en)en.value=j.mixer_enabled?'on':'off';const mt32o=document.getElementById('mx_mt32_out');if(mt32o)mt32o.value=j.mt32_audio_output;const sfo=document.getElementById('mx_sf_out');if(sfo)sfo.value=j.sf_audio_output;if(!j.channels)return;j.channels.forEach(ch=>{const sel=document.getElementById('mx_ch_'+ch.channel);if(sel)sel.value=ch.synth;});};";
+		HTML += "const mxRefresh=async()=>{try{const r=await fetch('/api/mixer/status',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(mxGrid&&mxGrid.children.length===0){for(let i=0;i<16;i++){const lbl=document.createElement('label');lbl.innerHTML='Canal MIDI '+(i+1)+'<select id=\"mx_ch_'+i+'\"><option value=\"0\">MT-32</option><option value=\"1\">SoundFont</option><option value=\"-1\">Default</option></select>';mxGrid.appendChild(lbl);document.getElementById('mx_ch_'+i).addEventListener('change',function(){mxApply('channel_synth_'+i,this.value);});}}applyMixerState(j);}catch(e){}};";
+		HTML += "const mxEn=document.getElementById('mx_enabled');if(mxEn)mxEn.addEventListener('change',()=>mxApply('mixer_enabled',mxEn.value));";
+		HTML += "const mxMT32O=document.getElementById('mx_mt32_out');if(mxMT32O)mxMT32O.addEventListener('change',()=>mxApply('mt32_audio_output',mxMT32O.value));";
+		HTML += "const mxSFO=document.getElementById('mx_sf_out');if(mxSFO)mxSFO.addEventListener('change',()=>mxApply('sf_audio_output',mxSFO.value));";
+		HTML += "rtRefresh();midiRefresh();mxRefresh();setInterval(rtRefresh,3000);setInterval(midiRefresh,300);setInterval(mxRefresh,5000);</script>";
 		HTML += "</main></body></html>";
 
 		const unsigned nBodyLength = HTML.GetLength();

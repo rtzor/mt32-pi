@@ -30,12 +30,24 @@
 #include "lcd/ui.h"
 #include "midimonitor.h"
 
+// Audio output hardware target that a synthesizer should be routed to.
+// The actual hardware device is owned by the kernel (CMT32Pi); this value
+// is used to communicate the desired routing so the kernel can create and
+// connect the appropriate CSoundBaseDevice instance.
+enum class TSynthAudioOutput
+{
+	PWM,   // GPIO PWM (headphone jack)
+	HDMI,  // HDMI digital audio
+	I2S,   // I²S external DAC
+};
+
 class CSynthBase
 {
 public:
 	CSynthBase(unsigned int nSampleRate)
 		: m_Lock(TASK_LEVEL),
 		  m_nSampleRate(nSampleRate),
+		  m_AudioOutput(TSynthAudioOutput::PWM),
 		  m_pUI(nullptr)
 	{
 	}
@@ -54,10 +66,17 @@ public:
 	virtual void UpdateLCD(CLCD& LCD, unsigned int nTicks) = 0;
 	void SetUserInterface(CUserInterface* pUI) { m_pUI = pUI; }
 
+	// Desired audio output for this synthesizer instance.
+	TSynthAudioOutput GetAudioOutput() const { return m_AudioOutput; }
+	void SetAudioOutput(TSynthAudioOutput eOutput) { m_AudioOutput = eOutput; }
+
 	CSpinLock m_Lock;
 	unsigned int m_nSampleRate;
 	CMIDIMonitor m_MIDIMonitor;
 	CUserInterface* m_pUI;
+
+private:
+	TSynthAudioOutput m_AudioOutput;
 };
 
 #endif

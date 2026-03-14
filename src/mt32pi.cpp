@@ -115,6 +115,7 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_nLEDOnTime(0),
 
 	  m_pSound(nullptr),
+	  m_pSound2(nullptr),
 	  m_pPisound(nullptr),
 
 	  m_nMasterVolume(100),
@@ -304,6 +305,18 @@ bool CMT32Pi::Initialize(bool bSerialMIDIAvailable)
 			return false;
 		}
 	}
+
+	// Set the mixer's default synth to the currently active synth.
+	// The mixer starts in bypass mode (disabled); MIDI is routed directly to
+	// m_pCurrentSynth until the web editor enables it.
+	m_MIDIMixer.SetDefaultSynth(m_pCurrentSynth);
+
+	// Initialise per-synth audio output to the global configured device.
+	const TSynthAudioOutput eGlobalOutput = ConfigAudioOutputToSynth(m_pConfig->AudioOutputDevice);
+	if (m_pMT32Synth)
+		m_pMT32Synth->SetAudioOutput(eGlobalOutput);
+	if (m_pSoundFontSynth)
+		m_pSoundFontSynth->SetAudioOutput(eGlobalOutput);
 
 	if (m_pPisound)
 		LOGNOTE("Using Pisound MIDI interface");
@@ -776,6 +789,84 @@ void CMT32Pi::GetMIDIChannelLevels(float* pOutLevels, float* pOutPeaks) const
 	pSynth->m_Lock.Release();
 }
 
+// ========== MIDI Mixer API ==========
+
+// Helper: map CConfig::TAudioOutputDevice → TSynthAudioOutput
+TSynthAudioOutput CMT32Pi::ConfigAudioOutputToSynth(CConfig::TAudioOutputDevice eDevice)
+{
+	switch (eDevice)
+	{
+		case CConfig::TAudioOutputDevice::HDMI: return TSynthAudioOutput::HDMI;
+		case CConfig::TAudioOutputDevice::I2S:  return TSynthAudioOutput::I2S;
+		default:                                return TSynthAudioOutput::PWM;
+	}
+}
+
+bool CMT32Pi::GetMixerEnabled() const
+{
+	return m_MIDIMixer.IsEnabled();
+}
+
+bool CMT32Pi::SetMixerEnabled(bool bEnabled)
+{
+	m_MIDIMixer.SetEnabled(bEnabled);
+	LOGNOTE("MIDI mixer %s", bEnabled ? "enabled" : "disabled");
+	return true;
+}
+
+int CMT32Pi::GetMixerChannelSynth(u8 nChannel) const
+{
+	if (nChannel >= CMIDIMixer::MIDIChannelCount)
+		return -1;
+
+	const CSynthBase* pSynth = m_MIDIMixer.GetChannelSynth(nChannel);
+
+	if (pSynth == m_pMT32Synth)
+		return 0;
+	if (pSynth == m_pSoundFontSynth)
+		return 1;
+
+	return -1; // default / unassigned
+}
+
+bool CMT32Pi::SetMixerChannelSynth(u8 nChannel, int nSynthIndex)
+{
+	if (nChannel >= CMIDIMixer::MIDIChannelCount)
+		return false;
+
+	CSynthBase* pSynth = nullptr;
+	if (nSynthIndex == 0)
+		pSynth = m_pMT32Synth;
+	else if (nSynthIndex == 1)
+		pSynth = m_pSoundFontSynth;
+	// nSynthIndex == -1 (or anything else) clears the assignment → fallback to default
+
+	m_MIDIMixer.SetChannelSynth(nChannel, pSynth);
+	return true;
+}
+
+TSynthAudioOutput CMT32Pi::GetSynthAudioOutput(TSynth eSynth) const
+{
+	const CSynthBase* pSynth = (eSynth == TSynth::MT32) ? static_cast<const CSynthBase*>(m_pMT32Synth)
+	                                                      : static_cast<const CSynthBase*>(m_pSoundFontSynth);
+	if (!pSynth)
+		return ConfigAudioOutputToSynth(m_pConfig->AudioOutputDevice);
+
+	return pSynth->GetAudioOutput();
+}
+
+bool CMT32Pi::SetSynthAudioOutput(TSynth eSynth, TSynthAudioOutput eOutput)
+{
+	CSynthBase* pSynth = (eSynth == TSynth::MT32) ? static_cast<CSynthBase*>(m_pMT32Synth)
+	                                               : static_cast<CSynthBase*>(m_pSoundFontSynth);
+	if (!pSynth)
+		return false;
+
+	pSynth->SetAudioOutput(eOutput);
+	LOGNOTE("Synth %d audio output set to %d", static_cast<int>(eSynth), static_cast<int>(eOutput));
+	return true;
+}
+
 void CMT32Pi::MainTask()
 {
 	CScheduler* const pScheduler = CScheduler::Get();
@@ -935,6 +1026,7 @@ void CMT32Pi::AudioTask()
 
 	// Extra byte so that we can write to the 24-bit buffer with overlapping 32-bit writes (efficiency)
 	float FloatBuffer[nQueueSizeFrames * nChannels];
+	float MixBuffer[nQueueSizeFrames * nChannels];
 s8 IntBuffer[nQueueSizeFrames * nBytesPerFrame + (bI2S ? 0 : 1)];
 
 	while (m_bRunning)
@@ -942,7 +1034,25 @@ s8 IntBuffer[nQueueSizeFrames * nBytesPerFrame + (bI2S ? 0 : 1)];
 		const size_t nFrames = nQueueSizeFrames - m_pSound->GetQueueFramesAvail();
 		const size_t nWriteBytes = nFrames * nBytesPerFrame;
 
-		m_pCurrentSynth->Render(FloatBuffer, nFrames);
+		const bool bMixerActive = m_MIDIMixer.IsEnabled()
+		                          && m_pMT32Synth
+		                          && m_pSoundFontSynth;
+
+		if (bMixerActive)
+		{
+			// Both synthesizers contribute audio.  Render each one separately
+			// then sum the samples before converting to the hardware format.
+			m_pMT32Synth->Render(FloatBuffer, nFrames);
+			m_pSoundFontSynth->Render(MixBuffer, nFrames);
+
+			const size_t nSamples = nFrames * nChannels;
+			for (size_t i = 0; i < nSamples; ++i)
+				FloatBuffer[i] += MixBuffer[i];
+		}
+		else
+		{
+			m_pCurrentSynth->Render(FloatBuffer, nFrames);
+		}
 
 		if (bReversedStereo)
 		{
@@ -1029,7 +1139,7 @@ void CMT32Pi::OnShortMessage(u32 nMessage)
 	if ((nMessage & 0xFF) < 0xF0)
 		LEDOn();
 
-	m_pCurrentSynth->HandleMIDIShortMessage(nMessage);
+	m_MIDIMixer.HandleMIDIShortMessage(nMessage);
 
 	// Wake from power saving mode if necessary
 	Awaken();
@@ -1040,9 +1150,9 @@ void CMT32Pi::OnSysExMessage(const u8* pData, size_t nSize)
 	// Flash LED
 	LEDOn();
 
-	// If we don't consume the SysEx message, forward it to the synthesizer
+	// If we don't consume the SysEx message, forward it via the mixer
 	if (!ParseCustomSysEx(pData, nSize))
-		m_pCurrentSynth->HandleMIDISysExMessage(pData, nSize);
+		m_MIDIMixer.HandleMIDISysExMessage(pData, nSize);
 
 	// Wake from power saving mode if necessary
 	Awaken();
@@ -1538,6 +1648,11 @@ void CMT32Pi::SwitchSynth(TSynth NewSynth)
 
 	m_pCurrentSynth->AllSoundOff();
 	m_pCurrentSynth = pNewSynth;
+
+	// Keep the mixer's default synth in sync with the active synth so that
+	// bypass mode (mixer disabled) always routes to the correct engine.
+	m_MIDIMixer.SetDefaultSynth(m_pCurrentSynth);
+
 	const char* pMode = NewSynth == TSynth::MT32 ? "MT-32 mode" : "SoundFont mode";
 	LOGNOTE("Switching to %s", pMode);
 	LCDLog(TLCDLogType::Notice, pMode);
