@@ -31,6 +31,7 @@ OBJS		:=	src/config.o \
 			src/power.o \
 			src/rommanager.o \
 			src/soundfontmanager.o \
+			src/synth/midimixer.o \
 			src/synth/mt32synth.o \
 			src/synth/soundfontsynth.o \
 			src/zoneallocator.o
