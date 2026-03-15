@@ -2257,8 +2257,8 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += "<button class='primary' type='submit'>Save config</button> <button class='warn' type='button' id='rebootBtn'>Restart Pi</button> <span id='status'></span>";
 		HTML += "</form>";
 		HTML += "<script>const f=document.getElementById('cfgForm');const s=document.getElementById('status');const rb=document.getElementById('rebootBtn');";
-		HTML += "f.addEventListener('submit',async(e)=>{e.preventDefault();s.textContent='Saving...';const body=new URLSearchParams(new FormData(f));try{const r=await fetch('/api/config/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();s.textContent=j.message||'OK';}catch(err){s.textContent='Error saving config';}})";
-		HTML += "rb.addEventListener('click',async()=>{if(!confirm('Restart mt32-pi now?'))return;try{await fetch('/api/system/reboot',{method:'POST'});s.textContent='Restart requested';}catch(err){s.textContent='Error requesting restart';}})";
+		HTML += "f.addEventListener('submit',async(e)=>{e.preventDefault();s.textContent='Saving...';const body=new URLSearchParams(new FormData(f));try{const r=await fetch('/api/config/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();s.textContent=j.message||'OK';}catch(err){s.textContent='Error saving config';}});";
+		HTML += "rb.addEventListener('click',async()=>{if(!confirm('Restart mt32-pi now?'))return;try{await fetch('/api/system/reboot',{method:'POST'});s.textContent='Restart requested';}catch(err){s.textContent='Error requesting restart';}});";
 		HTML += "const mEl=document.querySelector('select[name=\"network_mode\"]');const wSec=document.getElementById('wifi-section');";
 		HTML += "function _chkWifi(){if(wSec)wSec.classList.toggle('section-hidden',!mEl||mEl.value!=='wifi');}";
 		HTML += "if(mEl)mEl.addEventListener('change',_chkWifi);_chkWifi();";
