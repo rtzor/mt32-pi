@@ -2265,7 +2265,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += "fetch('/api/wifi/read').then(r=>r.json()).then(j=>{const ss=document.getElementById('wifi_ssid');const co=document.getElementById('wifi_country');if(ss)ss.value=j.ssid||'';if(co)co.value=j.country||'';}).catch(()=>{});";
 		HTML += "function saveWifi(){const ws=document.getElementById('wifi_status');const ss=document.getElementById('wifi_ssid');const co=document.getElementById('wifi_country');const pk=document.getElementById('wifi_psk');";
 		HTML += "if(!ss||!ss.value.trim()){if(ws)ws.textContent='SSID required';return;}if(!co||!co.value.trim()){if(ws)ws.textContent='Country required';return;}";
-		HTML += "if(ws)ws.textContent='Saving...';const body=new URLSearchParams({wifi_ssid:ss.value,wifi_psk:pk?pk.value:'',wifi_country:co.value})";
+		HTML += "if(ws)ws.textContent='Saving...';const body=new URLSearchParams({wifi_ssid:ss.value,wifi_psk:pk?pk.value:'',wifi_country:co.value});";
 		HTML += "fetch('/api/wifi/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()}).then(r=>r.json()).then(j=>{if(ws)ws.textContent=j.ok?'Saved. Restart to apply.':(j.message||'Error');}).catch(()=>{if(ws)ws.textContent='Error saving WiFi';});}</script>";
 		HTML += "</main></body></html>";
 
