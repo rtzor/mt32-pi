@@ -63,6 +63,9 @@ public:
 	virtual size_t Render(float* pBuffer, size_t nFrames) override;
 	virtual void ReportStatus() const override;
 	virtual void UpdateLCD(CLCD& LCD, unsigned int nTicks) override;
+	virtual const char* GetName() const override { return "MT-32"; }
+	virtual TSynth GetType() const override { return TSynth::MT32; }
+	virtual const char* GetChannelInstrumentName(u8 nChannel) override;
 
 	void SetMIDIChannels(TMIDIChannels Channels);
 	void SetReversedStereo(bool bEnabled) { m_pSynth->setReversedStereoEnabled(bEnabled); }

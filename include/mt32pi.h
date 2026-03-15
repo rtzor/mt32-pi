@@ -63,6 +63,8 @@
 #include "pisound.h"
 #include "power.h"
 #include "ringbuffer.h"
+#include "audiomixer.h"
+#include "midirouter.h"
 #include "synth/mt32romset.h"
 #include "synth/mt32synth.h"
 #include "synth/soundfontsynth.h"
@@ -139,6 +141,45 @@ public:
 	void RequestReboot() { m_bRunning = false; }
 	bool HasMT32Synth() const { return m_pMT32Synth != nullptr; }
 	bool HasSoundFontSynth() const { return m_pSoundFontSynth != nullptr; }
+
+	// ---- Mixer control (called from web handler on Core 0) ----
+	struct TMixerStatus
+	{
+		bool  bEnabled;
+		int   nPreset;           // TRouterPreset as int
+		bool  bDualMode;
+		float fMT32Volume;
+		float fFluidVolume;
+		float fMT32Pan;
+		float fFluidPan;
+		float fMasterVolume;
+		// Per-channel: engine name string, remap target, and layering flag
+		const char* pChannelEngine[16];
+		const char* pChannelInstrument[16];
+		u8          nChannelRemap[16];
+		bool        bLayered[16];
+		// Audio render performance
+		unsigned nRenderUs;      // last render time in µs
+		unsigned nRenderAvgUs;   // rolling average render time
+		unsigned nRenderPeakUs;  // peak render time since last read
+		unsigned nDeadlineUs;    // max allowed render time for current chunk
+		unsigned nCpuLoadPercent;// render_avg / deadline * 100
+	};
+
+	TMixerStatus GetMixerStatus() const;
+	bool SetMixerEnabled(bool bEnabled);
+	bool SetMixerPreset(int nPreset);
+	bool SetMixerChannelEngine(u8 nChannel, const char* pEngineName);
+	bool SetMixerChannelRemap(u8 nChannel, u8 nTargetChannel);
+	bool SetMixerEngineVolume(const char* pEngineName, int nVolumePercent);
+	bool SetMixerEnginePan(const char* pEngineName, int nPanPercent);
+
+	// CC filter and layering
+	bool SetMixerCCFilter(unsigned nEngine, u8 nCC, bool bAllow);
+	bool GetMixerCCFilter(unsigned nEngine, u8 nCC) const;
+	void ResetMixerCCFilters();
+	bool SetMixerLayering(u8 nChannel, bool bLayered);
+	bool SetMixerAllLayering(bool bLayered);
 
 	// ---- Sequencer control (called from Core 0 / web handler) ----
 	struct TSequencerStatus
@@ -218,6 +259,8 @@ private:
 
 	// Actions that can be triggered via events
 	void SwitchSynth(TSynth Synth);
+	void SetupMixerRouting();
+	void ApplyDualModeLimits(bool bDual);
 	void SwitchMT32ROMSet(TMT32ROMSet ROMSet);
 	void NextMT32ROMSet();
 	void SwitchSoundFont(size_t nIndex);
@@ -302,6 +345,18 @@ private:
 	CSynthBase* m_pCurrentSynth;
 	CMT32Synth* m_pMT32Synth;
 	CSoundFontSynth* m_pSoundFontSynth;
+
+	// MIDI Router + Audio Mixer
+	CMIDIRouter m_MIDIRouter;
+	CAudioMixer m_AudioMixer;
+	bool m_bMixerEnabled;
+
+	// Audio render performance monitor (Core 2 writes, Core 0 reads)
+	volatile unsigned m_nRenderUs;           // last chunk render time in µs
+	volatile unsigned m_nRenderAvgUs;        // exponential moving average
+	volatile unsigned m_nRenderPeakUs;       // peak since last API read
+	volatile unsigned m_nDeadlineUs;         // deadline for current chunk size
+	bool m_bAutoReducePartials;              // auto-reduce MT-32 partials if overloaded
 
 	// Menu long-press tracking
 	bool m_bMenuLongPressConsumed;

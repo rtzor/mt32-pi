@@ -719,8 +719,12 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	const bool bIsAppJSPath         = strcmp(pPath, "/app.js")        == 0;
 	const bool bIsWifiReadPath      = strcmp(pPath, "/api/wifi/read") == 0;
 	const bool bIsWifiSavePath      = strcmp(pPath, "/api/wifi/save") == 0;
+	const bool bIsMixerStatusPath   = strcmp(pPath, "/api/mixer/status") == 0;
+	const bool bIsMixerSetPath      = strcmp(pPath, "/api/mixer/set") == 0;
+	const bool bIsMixerPresetPath   = strcmp(pPath, "/api/mixer/preset") == 0;
+	const bool bIsMixerPagePath     = strcmp(pPath, "/mixer") == 0;
 
-	if (!bIsIndexPath && !bIsConfigPagePath && !bIsSoundPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsRuntimeStatusPath && !bIsRuntimeSetPath && !bIsSystemRebootPath && !bIsSeqStatusPath && !bIsSeqPlayPath && !bIsSeqStopPath && !bIsSeqFilesPath && !bIsSeqLoopPath && !bIsMidiNotePath && !bIsMidiRawPath && !bIsSequencerPagePath && !bIsAppCSSPath && !bIsAppJSPath && !bIsWifiReadPath && !bIsWifiSavePath)
+	if (!bIsIndexPath && !bIsConfigPagePath && !bIsSoundPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsRuntimeStatusPath && !bIsRuntimeSetPath && !bIsSystemRebootPath && !bIsSeqStatusPath && !bIsSeqPlayPath && !bIsSeqStopPath && !bIsSeqFilesPath && !bIsSeqLoopPath && !bIsMidiNotePath && !bIsMidiRawPath && !bIsSequencerPagePath && !bIsAppCSSPath && !bIsAppJSPath && !bIsWifiReadPath && !bIsWifiSavePath && !bIsMixerStatusPath && !bIsMixerSetPath && !bIsMixerPresetPath && !bIsMixerPagePath)
 		return HTTPNotFound;
 
 	if (!m_pMT32Pi)
@@ -1011,6 +1015,203 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		*pLength = nWSLen;
 		*ppContentType = "application/json; charset=utf-8";
 		return HTTPOK;
+	}
+
+	// ---- GET /api/mixer/status ----
+	if (bIsMixerStatusPath)
+	{
+		const CMT32Pi::TMixerStatus ms = m_pMT32Pi->GetMixerStatus();
+		CString JSON;
+		JSON += "{";
+		AppendJSONPairBool(JSON, "enabled", ms.bEnabled);
+		AppendJSONPairInt(JSON, "preset", ms.nPreset);
+		AppendJSONPairBool(JSON, "dual_mode", ms.bDualMode);
+		AppendJSONPairFloat(JSON, "master_volume", ms.fMasterVolume);
+		AppendJSONPairFloat(JSON, "mt32_volume", ms.fMT32Volume);
+		AppendJSONPairFloat(JSON, "fluid_volume", ms.fFluidVolume);
+		AppendJSONPairFloat(JSON, "mt32_pan", ms.fMT32Pan);
+		AppendJSONPairFloat(JSON, "fluid_pan", ms.fFluidPan);
+
+		// Audio render performance
+		AppendJSONPairInt(JSON, "render_us", static_cast<int>(ms.nRenderUs));
+		AppendJSONPairInt(JSON, "render_avg_us", static_cast<int>(ms.nRenderAvgUs));
+		AppendJSONPairInt(JSON, "render_peak_us", static_cast<int>(ms.nRenderPeakUs));
+		AppendJSONPairInt(JSON, "deadline_us", static_cast<int>(ms.nDeadlineUs));
+		AppendJSONPairInt(JSON, "cpu_load", static_cast<int>(ms.nCpuLoadPercent));
+
+		// Channel array
+		JSON += "\"channels\":[";
+		for (int i = 0; i < 16; ++i)
+		{
+			if (i > 0) JSON += ",";
+			JSON += "{";
+			CString ChNum;
+			ChNum.Format("%d", i + 1);
+			AppendJSONPair(JSON, "ch", static_cast<const char*>(ChNum));
+			AppendJSONPair(JSON, "engine", ms.pChannelEngine[i]);
+			AppendJSONPairInt(JSON, "remap", static_cast<int>(ms.nChannelRemap[i]) + 1);
+			AppendJSONPairBool(JSON, "layered", ms.bLayered[i]);
+			AppendJSONPair(JSON, "instrument", ms.pChannelInstrument[i] ? ms.pChannelInstrument[i] : "", false);
+			JSON += "}";
+		}
+		JSON += "]}";
+
+		const unsigned nLen = JSON.GetLength();
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(JSON), nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/mixer/set ----
+	if (bIsMixerSetPath)
+	{
+		if (!pFormData || !*pFormData)
+			return HTTPBadRequest;
+
+		char Param[64] = {};
+		char Value[128] = {};
+		if (!GetFormValue(pFormData, "param", Param, sizeof(Param))
+		 || !GetFormValue(pFormData, "value", Value, sizeof(Value)))
+			return HTTPBadRequest;
+
+		bool bApplied = false;
+		int nVal = 0;
+
+		if (std::strcmp(Param, "enabled") == 0)
+		{
+			bool bEnabled = false;
+			if (CConfig::ParseOption(Value, &bEnabled))
+				bApplied = m_pMT32Pi->SetMixerEnabled(bEnabled);
+		}
+		else if (std::strcmp(Param, "mt32_volume") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetMixerEngineVolume("mt32", nVal);
+		}
+		else if (std::strcmp(Param, "fluid_volume") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetMixerEngineVolume("fluidsynth", nVal);
+		}
+		else if (std::strcmp(Param, "mt32_pan") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetMixerEnginePan("mt32", nVal);
+		}
+		else if (std::strcmp(Param, "fluid_pan") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetMixerEnginePan("fluidsynth", nVal);
+		}
+		else if (std::strcmp(Param, "channel_engine") == 0)
+		{
+			// Value format: "<ch>,<engine>" e.g. "5,mt32"
+			char* pComma = std::strchr(Value, ',');
+			if (pComma)
+			{
+				*pComma = '\0';
+				int nCh = 0;
+				if (ParseIntStrict(Value, nCh) && nCh >= 1 && nCh <= 16)
+					bApplied = m_pMT32Pi->SetMixerChannelEngine(static_cast<u8>(nCh - 1), pComma + 1);
+			}
+		}
+		else if (std::strcmp(Param, "channel_remap") == 0)
+		{
+			// Value format: "<src_ch>,<dst_ch>" e.g. "5,1"
+			char* pComma = std::strchr(Value, ',');
+			if (pComma)
+			{
+				*pComma = '\0';
+				int nSrc = 0, nDst = 0;
+				if (ParseIntStrict(Value, nSrc) && ParseIntStrict(pComma + 1, nDst)
+				 && nSrc >= 1 && nSrc <= 16 && nDst >= 1 && nDst <= 16)
+					bApplied = m_pMT32Pi->SetMixerChannelRemap(
+						static_cast<u8>(nSrc - 1), static_cast<u8>(nDst - 1));
+			}
+		}
+		else if (std::strcmp(Param, "channel_layer") == 0)
+		{
+			// Value format: "<ch>,<on|off>" e.g. "5,on"
+			char* pComma = std::strchr(Value, ',');
+			if (pComma)
+			{
+				*pComma = '\0';
+				int nCh = 0;
+				bool bLayer = false;
+				if (ParseIntStrict(Value, nCh) && nCh >= 1 && nCh <= 16
+				 && CConfig::ParseOption(pComma + 1, &bLayer))
+					bApplied = m_pMT32Pi->SetMixerLayering(static_cast<u8>(nCh - 1), bLayer);
+			}
+		}
+		else if (std::strcmp(Param, "all_layer") == 0)
+		{
+			bool bLayer = false;
+			if (CConfig::ParseOption(Value, &bLayer))
+				bApplied = m_pMT32Pi->SetMixerAllLayering(bLayer);
+		}
+		else if (std::strcmp(Param, "cc_filter") == 0)
+		{
+			// Value format: "<engine_idx>,<cc>,<on|off>" e.g. "0,7,off"
+			// engine_idx: 0=MT32, 1=FluidSynth
+			char* p1 = std::strchr(Value, ',');
+			if (p1)
+			{
+				*p1 = '\0';
+				char* p2 = std::strchr(p1 + 1, ',');
+				if (p2)
+				{
+					*p2 = '\0';
+					int nEng = 0, nCC = 0;
+					bool bAllow = false;
+					if (ParseIntStrict(Value, nEng) && ParseIntStrict(p1 + 1, nCC)
+					 && CConfig::ParseOption(p2 + 1, &bAllow)
+					 && nEng >= 0 && nEng <= 1 && nCC >= 0 && nCC <= 127)
+						bApplied = m_pMT32Pi->SetMixerCCFilter(
+							static_cast<unsigned>(nEng), static_cast<u8>(nCC), bAllow);
+				}
+			}
+		}
+		else if (std::strcmp(Param, "cc_filter_reset") == 0)
+		{
+			m_pMT32Pi->ResetMixerCCFilters();
+			bApplied = true;
+		}
+
+		const char* pOK = bApplied ? "{\"ok\":true}" : "{\"ok\":false}";
+		const unsigned nLen = static_cast<unsigned>(std::strlen(pOK));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pOK, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return bApplied ? HTTPOK : HTTPBadRequest;
+	}
+
+	// ---- POST /api/mixer/preset ----
+	if (bIsMixerPresetPath)
+	{
+		if (!pFormData || !*pFormData)
+			return HTTPBadRequest;
+
+		char PresetVal[32] = {};
+		if (!GetFormValue(pFormData, "preset", PresetVal, sizeof(PresetVal)))
+			return HTTPBadRequest;
+
+		int nPreset = -1;
+		if (std::strcmp(PresetVal, "single_mt32") == 0)    nPreset = 0;
+		else if (std::strcmp(PresetVal, "single_fluid") == 0) nPreset = 1;
+		else if (std::strcmp(PresetVal, "split_gm") == 0)     nPreset = 2;
+		else ParseIntStrict(PresetVal, nPreset);
+
+		const bool bApplied = m_pMT32Pi->SetMixerPreset(nPreset);
+		const char* pOK = bApplied ? "{\"ok\":true}" : "{\"ok\":false}";
+		const unsigned nLen = static_cast<unsigned>(std::strlen(pOK));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pOK, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return bApplied ? HTTPOK : HTTPBadRequest;
 	}
 
 	const CConfig* pConfig = m_pMT32Pi->GetConfig();
@@ -1563,7 +1764,13 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		AppendJSONPairInt(JSON, "mt32_midi_delay", m_pMT32Pi->GetMT32MIDIDelayMode());
 		AppendJSONPairInt(JSON, "mt32_analog_mode", m_pMT32Pi->GetMT32AnalogMode());
 		AppendJSONPairInt(JSON, "mt32_renderer_type", m_pMT32Pi->GetMT32RendererType());
-		AppendJSONPairInt(JSON, "mt32_partial_count", m_pMT32Pi->GetMT32PartialCount(), false);
+		AppendJSONPairInt(JSON, "mt32_partial_count", m_pMT32Pi->GetMT32PartialCount());
+		{
+			const CMT32Pi::TMixerStatus mxs = m_pMT32Pi->GetMixerStatus();
+			AppendJSONPairBool(JSON, "mixer_enabled", mxs.bEnabled);
+			AppendJSONPairInt(JSON, "mixer_preset", mxs.nPreset);
+			AppendJSONPairBool(JSON, "mixer_dual_mode", mxs.bDualMode, false);
+		}
 		JSON += "}";
 
 		const unsigned nBodyLength = JSON.GetLength();
@@ -1626,7 +1833,13 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		AppendJSONPairInt(JSON, "mt32_midi_delay", m_pMT32Pi->GetMT32MIDIDelayMode());
 		AppendJSONPairInt(JSON, "mt32_analog_mode", m_pMT32Pi->GetMT32AnalogMode());
 		AppendJSONPairInt(JSON, "mt32_renderer_type", m_pMT32Pi->GetMT32RendererType());
-		AppendJSONPairInt(JSON, "mt32_partial_count", m_pMT32Pi->GetMT32PartialCount(), false);
+		AppendJSONPairInt(JSON, "mt32_partial_count", m_pMT32Pi->GetMT32PartialCount());
+		{
+			const CMT32Pi::TMixerStatus mxs = m_pMT32Pi->GetMixerStatus();
+			AppendJSONPairBool(JSON, "mixer_enabled", mxs.bEnabled);
+			AppendJSONPairInt(JSON, "mixer_preset", mxs.nPreset);
+			AppendJSONPairBool(JSON, "mixer_dual_mode", mxs.bDualMode, false);
+		}
 		JSON += "}";
 
 		const unsigned nBodyLength = JSON.GetLength();
@@ -1759,7 +1972,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += "<title>mt32-pi sequencer</title><link rel='stylesheet' href='/app.css'></head><body><main>";
 		HTML += "<script src='/app.js'></script>";
 		HTML += "<h1>MIDI Sequencer</h1><p>Plays MIDI files from SD card or USB.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a></nav>";
+		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
 		HTML += "<section><h2>File</h2><div class='grid'>";
 		HTML += "<label>MIDI file<select id='seq-file'><option value=''>Loading...</option></select></label></div>";
 		HTML += "<div style='margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;'>";
@@ -1822,6 +2035,159 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		return HTTPOK;
 	}
 
+	if (bIsMixerPagePath)
+	{
+		CString HTML;
+		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
+		HTML += "<title>mt32-pi mixer</title><link rel='stylesheet' href='/app.css'></head><body><main>";
+		HTML += "<script src='/app.js'></script>";
+		HTML += "<h1>MIDI Mixer / Router</h1>";
+		HTML += "<p>Route MIDI channels to engines and remap channel numbers.</p>";
+		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
+
+		// Preset + Enable section
+		HTML += "<section><h2>Mode</h2><div class='grid'>";
+		HTML += "<label>Preset<select id='mx-preset' onchange='setPreset(this.value)'>";
+		HTML += "<option value='0'>Single MT-32</option><option value='1'>Single FluidSynth</option>";
+		HTML += "<option value='2'>Split GM</option><option value='3'>Custom</option></select></label>";
+		HTML += "<label>Dual mode<select id='mx-enabled' onchange='setEnabled(this.value)'>";
+		HTML += "<option value='1'>Enabled</option><option value='0'>Disabled</option></select></label>";
+		HTML += "</div></section>";
+
+		// Volume / Pan
+		HTML += "<section><h2>Engine Levels</h2><div class='grid'>";
+		HTML += "<label>MT-32 vol<input id='mx-mt32v' type='range' min='0' max='100' oninput='setParam(\"mt32_volume\",this.value)'></label>";
+		HTML += "<label>FluidSynth vol<input id='mx-fluidv' type='range' min='0' max='100' oninput='setParam(\"fluid_volume\",this.value)'></label>";
+		HTML += "<label>MT-32 pan<input id='mx-mt32p' type='range' min='-100' max='100' oninput='setParam(\"mt32_pan\",this.value)'></label>";
+		HTML += "<label>FluidSynth pan<input id='mx-fluidp' type='range' min='-100' max='100' oninput='setParam(\"fluid_pan\",this.value)'></label>";
+		HTML += "</div></section>";
+
+		// Audio render performance
+		HTML += "<section><h2>Audio Performance</h2><div class='grid'>";
+		HTML += "<label>Render <span id='mx-render'>-</span> &micro;s</label>";
+		HTML += "<label>Average <span id='mx-avg'>-</span> &micro;s</label>";
+		HTML += "<label>Peak <span id='mx-peak'>-</span> &micro;s</label>";
+		HTML += "<label>Deadline <span id='mx-deadline'>-</span> &micro;s</label>";
+		HTML += "<label>CPU load <strong id='mx-cpu'>-</strong>%</label>";
+		HTML += "</div></section>";
+
+		// Channel routing table
+		HTML += "<section><h2>Channel Routing</h2>";
+		HTML += "<table style='width:100%;border-collapse:collapse;'><thead><tr>";
+		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>CH</th>";
+		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Engine</th>";
+		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Remap&rarr;</th>";
+		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Layer</th>";
+		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Instrument</th>";
+		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;min-width:80px;'>Activity</th>";
+		HTML += "</tr></thead><tbody id='mx-ch'></tbody></table>";
+		HTML += "<div style='margin-top:8px;'><button onclick='setAllLayer(true)'>Layer All</button> ";
+		HTML += "<button onclick='setAllLayer(false)'>Unlayer All</button> ";
+		HTML += "<button onclick='resetCCFilters()'>Reset CC Filters</button></div></section>";
+
+		HTML += "<p id='mx-msg' style='color:#64748b;'></p>";
+
+		// JavaScript
+		HTML += "<script>";
+		// helpers
+		HTML += "function msg(t){document.getElementById('mx-msg').textContent=t;setTimeout(function(){document.getElementById('mx-msg').textContent='';},2000);}";
+		HTML += "function setParam(p,v){_qs('/api/mixer/set','param='+p+'&value='+encodeURIComponent(v),function(r){if(!r||!r.ok)msg('Error');});}";
+		HTML += "function setEnabled(v){setParam('enabled',v==='1'?'on':'off');}";
+		HTML += "function setPreset(v){_qs('/api/mixer/preset','preset='+v,function(r){if(r&&r.ok)loadStatus();else msg('Error');});}";
+
+		// channel engine/remap
+		HTML += "function setChEngine(ch,eng){_qs('/api/mixer/set','param=channel_engine&value='+ch+','+eng,function(r){if(r&&r.ok)loadStatus();else msg('Error');});}";
+		HTML += "function setChRemap(ch,dst){var n=parseInt(dst,10);if(n<1||n>16)return;";
+		HTML += "_qs('/api/mixer/set','param=channel_remap&value='+ch+','+n,function(r){if(r&&r.ok)loadStatus();else msg('Error');});}";
+
+		// layer
+		HTML += "function setChLayer(ch,on){_qs('/api/mixer/set','param=channel_layer&value='+ch+','+(on?'on':'off'),function(r){if(r&&r.ok)loadStatus();else msg('Error');});}";
+		HTML += "function setAllLayer(on){_qs('/api/mixer/set','param=all_layer&value='+(on?'on':'off'),function(r){if(r&&r.ok)loadStatus();else msg('Error');});}";
+		HTML += "function resetCCFilters(){_qs('/api/mixer/set','param=cc_filter_reset&value=1',function(r){if(r&&r.ok)msg('CC filters reset');else msg('Error');});}";
+
+		// render
+		HTML += "function renderChannels(chs){var tb=document.getElementById('mx-ch');tb.innerHTML='';";
+		HTML += "for(var i=0;i<chs.length;i++){var c=chs[i];var tr=document.createElement('tr');";
+		HTML += "var bg=i%2===0?'#111827':'#0b1220';tr.style.background=bg;";
+
+		// CH number cell
+		HTML += "var td1=document.createElement('td');td1.style.padding='6px 4px';td1.style.borderBottom='1px solid #1e293b';";
+		HTML += "td1.textContent=c.ch;tr.appendChild(td1);";
+
+		// Engine select cell
+		HTML += "var td2=document.createElement('td');td2.style.padding='6px 4px';td2.style.borderBottom='1px solid #1e293b';";
+		HTML += "var sel=document.createElement('select');sel.dataset.ch=c.ch;";
+		HTML += "var o1=document.createElement('option');o1.value='mt32';o1.textContent='MT-32';if(c.engine==='MT-32')o1.selected=true;sel.appendChild(o1);";
+		HTML += "var o2=document.createElement('option');o2.value='fluidsynth';o2.textContent='FluidSynth';if(c.engine==='FluidSynth')o2.selected=true;sel.appendChild(o2);";
+		HTML += "sel.onchange=function(){setChEngine(this.dataset.ch,this.value);};";
+		HTML += "td2.appendChild(sel);tr.appendChild(td2);";
+
+		// Remap input cell
+		HTML += "var td3=document.createElement('td');td3.style.padding='6px 4px';td3.style.borderBottom='1px solid #1e293b';";
+		HTML += "var inp=document.createElement('input');inp.type='number';inp.min=1;inp.max=16;inp.value=c.remap;";
+		HTML += "inp.style.width='60px';inp.dataset.ch=c.ch;";
+		HTML += "inp.onchange=function(){setChRemap(this.dataset.ch,this.value);};";
+		HTML += "td3.appendChild(inp);tr.appendChild(td3);";
+
+		// Layer checkbox cell
+		HTML += "var td4=document.createElement('td');td4.style.padding='6px 4px';td4.style.borderBottom='1px solid #1e293b';";
+		HTML += "var cb=document.createElement('input');cb.type='checkbox';cb.checked=!!c.layered;cb.dataset.ch=c.ch;";
+		HTML += "cb.onchange=function(){setChLayer(this.dataset.ch,this.checked);};";
+		HTML += "td4.appendChild(cb);tr.appendChild(td4);";
+
+		// Instrument name cell
+		HTML += "var td5i=document.createElement('td');td5i.style.padding='6px 4px';td5i.style.borderBottom='1px solid #1e293b';";
+		HTML += "td5i.style.fontSize='11px';td5i.style.color='#94a3b8';td5i.style.maxWidth='120px';td5i.style.overflow='hidden';td5i.style.textOverflow='ellipsis';td5i.style.whiteSpace='nowrap';";
+		HTML += "td5i.textContent=c.instrument||'\\u2014';tr.appendChild(td5i);";
+
+		// Activity meter cell
+		HTML += "var td5=document.createElement('td');td5.style.padding='6px 4px';td5.style.borderBottom='1px solid #1e293b';";
+		HTML += "td5.innerHTML='<div class=\"meter-bar\" style=\"height:8px;\"><div class=\"meter-fill\" id=\"mxf-'+c.ch+'\"></div><div class=\"meter-peak\" id=\"mxp-'+c.ch+'\"></div></div>';";
+		HTML += "tr.appendChild(td5);";
+
+		HTML += "tb.appendChild(tr);}}";
+
+		// load status
+		HTML += "function loadStatus(){_qs('/api/mixer/status','',function(d){if(!d)return;";
+		HTML += "document.getElementById('mx-preset').value=d.preset;";
+		HTML += "document.getElementById('mx-enabled').value=d.enabled?'1':'0';";
+		HTML += "document.getElementById('mx-mt32v').value=Math.round(d.mt32_volume*100);";
+		HTML += "document.getElementById('mx-fluidv').value=Math.round(d.fluid_volume*100);";
+		HTML += "document.getElementById('mx-mt32p').value=Math.round(d.mt32_pan*100);";
+		HTML += "document.getElementById('mx-fluidp').value=Math.round(d.fluid_pan*100);";
+		HTML += "document.getElementById('mx-render').textContent=d.render_us;";
+		HTML += "document.getElementById('mx-avg').textContent=d.render_avg_us;";
+		HTML += "document.getElementById('mx-peak').textContent=d.render_peak_us;";
+		HTML += "document.getElementById('mx-deadline').textContent=d.deadline_us;";
+		HTML += "document.getElementById('mx-cpu').textContent=d.cpu_load;";
+		HTML += "renderChannels(d.channels);});}";
+
+		HTML += "loadStatus();setInterval(loadStatus,2000);";
+
+		// WebSocket for real-time channel meters
+		HTML += "var _mxLv=new Array(16).fill(0),_mxPk=new Array(16).fill(0),_mxPa=new Array(16).fill(-9999);";
+		HTML += "var _mxTgt=new Array(16).fill(0),_mxPt=new Array(16).fill(0);";
+		HTML += "function _mxRf(ts){for(var i=0;i<16;i++){var t=_mxTgt[i];_mxLv[i]=t>_mxLv[i]?_mxLv[i]+(t-_mxLv[i])*0.3:_mxLv[i]+(t-_mxLv[i])*0.07;";
+		HTML += "if(_mxPt[i]>_mxPk[i]){_mxPk[i]=_mxPt[i];_mxPa[i]=ts;}else if(ts-_mxPa[i]>1200)_mxPk[i]*=0.97;";
+		HTML += "var f=document.getElementById('mxf-'+i);if(f)f.style.width=(_mxLv[i]*100).toFixed(1)+'%';";
+		HTML += "var p=document.getElementById('mxp-'+i);if(p)p.style.left=(_mxPk[i]*100).toFixed(1)+'%';}";
+		HTML += "requestAnimationFrame(_mxRf);}requestAnimationFrame(_mxRf);";
+		HTML += "(function(){var ws=null,_rt=0;function conn(){ws=new WebSocket('ws://'+location.hostname+':8765/');";
+		HTML += "ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.channels)for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_mxTgt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_mxPt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));}}catch(x){}};";
+		HTML += "ws.onclose=function(){_rt=Math.min((_rt||500)*2,8000);setTimeout(conn,_rt);};ws.onerror=function(){ws.close();};}conn();})();";
+
+		HTML += "</script></main></body></html>";
+
+		const unsigned nMixerLen = HTML.GetLength();
+		if (*pLength < nMixerLen)
+			return HTTPInternalServerError;
+
+		memcpy(pBuffer, static_cast<const char*>(HTML), nMixerLen);
+		*pLength = nMixerLen;
+		*ppContentType = "text/html; charset=utf-8";
+		return HTTPOK;
+	}
+
 	if (bIsSoundPagePath)
 	{
 		CString HTML;
@@ -1874,14 +2240,15 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		CString SFGain;        SFGain.Format("%.2f",       bHasSoundFontFX ? nSFGain        : 0.0f);
 
 		HTML += "<h1>Sound control</h1><p>Live adjustments for synthesis engines and effects, no restart needed.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a></nav>";
+		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
 		HTML += "<div class='statusbar'><div class='pill'>Active synth: <strong id='rt_active_synth_label'>";
 		AppendEscaped(HTML, m_pMT32Pi->GetActiveSynthName());
 		HTML += "</strong></div><div class='pill'>MT-32 ROM: <strong id='rt_mt32_rom_name'>";
 		AppendEscaped(HTML, m_pMT32Pi->GetCurrentMT32ROMName());
 		HTML += "</strong></div><div class='pill'>SoundFont: <strong id='rt_soundfont_name'>";
 		AppendEscaped(HTML, m_pMT32Pi->GetCurrentSoundFontName());
-		HTML += "</strong></div></div>";
+		HTML += "</strong></div><div class='pill'>Mixer: <strong id='rt_mixer_label'>-</strong></div></div>";
+		HTML += "<div id='mx-banner' style='display:none;background:#1e3a5f;border:1px solid #22d3ee;border-radius:8px;padding:8px 12px;margin:8px 0;color:#93c5fd;font-size:13px;'>&#9432; Mixer dual mode: both engines processing audio. Changing active synth switches to single-engine mode.</div>";
 		HTML += "<div class='tabbar'><button class='tabbtn";
 		HTML += bMT32Active ? " active" : "";
 		HTML += "' type='button' id='tab-mt32'>MT-32</button><button class='tabbtn";
@@ -2056,7 +2423,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 			"const setDisabled=(id,b)=>{const e=document.getElementById(id);if(e)e.disabled=!!b;};"
 			"const setSectionHidden=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('section-hidden',!!b);};"
 			"const setTabActive=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',!!b);};";
-		HTML += "const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_gain_val',Number(j.sf_gain).toFixed(2));setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_reverb_damping_val',Number(j.sf_reverb_damping).toFixed(1));setText('rt_sf_reverb_width_val',Math.round(Number(j.sf_reverb_width)));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_sf_chorus_level_val',Number(j.sf_chorus_level).toFixed(2));setText('rt_sf_chorus_speed_val',Number(j.sf_chorus_speed).toFixed(2));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':'soundfont';const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const sfg=document.getElementById('rt_sf_gain');if(sfg)sfg.value=Number(j.sf_gain).toFixed(2);const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const rtd=document.getElementById('rt_sf_reverb_damping');if(rtd)rtd.value=Number(j.sf_reverb_damping).toFixed(1);const rtw=document.getElementById('rt_sf_reverb_width');if(rtw)rtw.value=Math.round(Number(j.sf_reverb_width));const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const ctl=document.getElementById('rt_sf_chorus_level');if(ctl)ctl.value=Number(j.sf_chorus_level).toFixed(2);const ctv=document.getElementById('rt_sf_chorus_voices');if(ctv)ctv.value=j.sf_chorus_voices;const cts=document.getElementById('rt_sf_chorus_speed');if(cts)cts.value=Number(j.sf_chorus_speed).toFixed(2);const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_gain',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_reverb_damping',!sf);setDisabled('rt_sf_reverb_width',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setDisabled('rt_sf_chorus_level',!sf);setDisabled('rt_sf_chorus_voices',!sf);setDisabled('rt_sf_chorus_speed',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);};";
+		HTML += "const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_gain_val',Number(j.sf_gain).toFixed(2));setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_reverb_damping_val',Number(j.sf_reverb_damping).toFixed(1));setText('rt_sf_reverb_width_val',Math.round(Number(j.sf_reverb_width)));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_sf_chorus_level_val',Number(j.sf_chorus_level).toFixed(2));setText('rt_sf_chorus_speed_val',Number(j.sf_chorus_speed).toFixed(2));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':'soundfont';const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const sfg=document.getElementById('rt_sf_gain');if(sfg)sfg.value=Number(j.sf_gain).toFixed(2);const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const rtd=document.getElementById('rt_sf_reverb_damping');if(rtd)rtd.value=Number(j.sf_reverb_damping).toFixed(1);const rtw=document.getElementById('rt_sf_reverb_width');if(rtw)rtw.value=Math.round(Number(j.sf_reverb_width));const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const ctl=document.getElementById('rt_sf_chorus_level');if(ctl)ctl.value=Number(j.sf_chorus_level).toFixed(2);const ctv=document.getElementById('rt_sf_chorus_voices');if(ctv)ctv.value=j.sf_chorus_voices;const cts=document.getElementById('rt_sf_chorus_speed');if(cts)cts.value=Number(j.sf_chorus_speed).toFixed(2);const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_gain',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_reverb_damping',!sf);setDisabled('rt_sf_reverb_width',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setDisabled('rt_sf_chorus_level',!sf);setDisabled('rt_sf_chorus_voices',!sf);setDisabled('rt_sf_chorus_speed',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);var dual=!!j.mixer_dual_mode;if(dual){document.querySelectorAll('#mt32-section input,#mt32-section select,#sf-section input,#sf-section select').forEach(function(e){e.disabled=false;});setSectionHidden('mt32-section',false);setSectionHidden('sf-section',false);setTabActive('tab-mt32',true);setTabActive('tab-sf',true);}var mxl=document.getElementById('rt_mixer_label');if(mxl){var pn=['All MT-32','All FluidSynth','Split GM','Custom'];if(j.mixer_enabled){mxl.textContent=pn[j.mixer_preset]||'On';mxl.style.color='#86efac';}else{mxl.textContent='OFF';mxl.style.color='#64748b';}}var mxb=document.getElementById('mx-banner');if(mxb)mxb.style.display=dual?'block':'none';};";
 		HTML += "const rtRefresh=async()=>{try{const r=await fetch('/api/runtime/status',{cache:'no-store'});if(!r.ok)throw new Error('http');const j=await r.json();applyRuntimeState(j);}catch(err){if(rs)rs.textContent='Error reading runtime status';}};";
 		HTML += "const rtApply=async(param,value)=>{if(!rs)return;rs.textContent='Applying...';const body=new URLSearchParams({param,value:String(value)});try{const r=await fetch('/api/runtime/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();if(!r.ok||!j.ok){rs.textContent='Could not apply '+param;return;}applyRuntimeState(j);rs.textContent='Applied: '+param;}catch(err){rs.textContent='Error applying '+param;}};";
 		HTML += "const bindChange=(id,param)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('change',()=>rtApply(param,el.value));};const bindRange=(id,param,formatter)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('input',()=>{if(formatter)formatter(el.value);});el.addEventListener('change',()=>rtApply(param,el.value));};";
@@ -2082,7 +2449,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += "<title>mt32-pi config</title><link rel='stylesheet' href='/app.css'></head><body><main>";
 		HTML += "<script src='/app.js'></script>";
 		HTML += "<h1>Configure mt32-pi</h1><p>Saves changes to <code>mt32-pi.cfg</code> and creates a backup <code>mt32-pi.cfg.bak</code>.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a></nav>";
+		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
 		HTML += "<form id='cfgForm'>";
 
 		// ---- [system] ----
@@ -2327,7 +2694,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>mt32-pi status</title><link rel='stylesheet' href='/app.css'></head><body><main>";
 	HTML += "<script src='/app.js'></script>";
 	HTML += "<h1>mt32-pi</h1><p>Live status of system, network and synthesizers.</p>";
-	HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a></nav>";
+	HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
 	HTML += "<div class='hero'>";
 	HTML += "<div class='pill'>IP: ";
 		AppendEscaped(HTML, IPAddress);
@@ -2397,6 +2764,18 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	AppendRow(HTML, "Chorus", BoolText(pConfig->FluidSynthDefaultChorusActive));
 	AppendSectionEnd(HTML);
 
+	// Mixer status section
+	{
+		const CMT32Pi::TMixerStatus ms = m_pMT32Pi->GetMixerStatus();
+		static const char* PresetNames[] = {"All MT-32", "All FluidSynth", "Split GM", "Custom"};
+		const char* pPresetName = (ms.nPreset >= 0 && ms.nPreset <= 3) ? PresetNames[ms.nPreset] : "Unknown";
+		HTML += "<section><h2>Mixer <a href='/mixer' style='font-size:13px;font-weight:normal;margin-left:8px;'>&#8594; Go</a></h2><table>";
+		AppendRow(HTML, "Enabled", BoolText(ms.bEnabled));
+		AppendRow(HTML, "Preset", pPresetName);
+		AppendRow(HTML, "Dual mode", BoolText(ms.bDualMode));
+		AppendSectionEnd(HTML);
+	}
+
 	HTML += "<section><h2>Sequencer <a href='/sequencer' style='font-size:13px;font-weight:normal;margin-left:8px;'>&#8594; Go</a></h2>";
 	HTML += "<span id='idx-seq-badge' class='badge'>Loading...</span>";
 	HTML += "<p id='idx-seq-file' style='margin-top:8px;color:#64748b;word-break:break-all;font-size:12px;margin-bottom:4px;'>&#8212;</p>";
@@ -2408,7 +2787,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 
 	HTML += "<script>";
 	HTML += "const grid=document.getElementById('midi-grid');const st=document.getElementById('midi-status');";
-	HTML += "for(let i=1;i<=16;i++){const row=document.createElement('div');row.className='meter';row.innerHTML='<span class=\"meter-label\">CH'+String(i).padStart(2,'0')+'</span><div class=\"meter-bar\"><div class=\"meter-fill\" id=\"fill-'+i+'\"></div><div class=\"meter-peak\" id=\"peak-'+i+'\"></div></div>';grid.appendChild(row);}";
+	HTML += "for(let i=1;i<=16;i++){const row=document.createElement('div');row.className='meter';row.innerHTML='<span class=\"meter-label\" id=\"mlbl-'+i+'\">CH'+String(i).padStart(2,'0')+'</span><div class=\"meter-bar\"><div class=\"meter-fill\" id=\"fill-'+i+'\"></div><div class=\"meter-peak\" id=\"peak-'+i+'\"></div></div>';grid.appendChild(row);}";
 	HTML += "const _f=[],_p=[],_lt=new Array(16).fill(0),_lv=new Array(16).fill(0),_pt=new Array(16).fill(0),_pk=new Array(16).fill(0),_pa=new Array(16).fill(-9999);";
 	HTML += "for(let i=1;i<=16;i++){_f.push(document.getElementById('fill-'+i));_p.push(document.getElementById('peak-'+i));}";
 	// Piano roll state: ring buffer of snapshots
@@ -2420,19 +2799,25 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	HTML += "const _prCtx=_prCanvas?_prCanvas.getContext('2d'):null;";
 	// Source colors: 0=off, 1=physical(green), 2=player(blue), 3=webui(orange)
 	HTML += "const SRC_COLORS=['','#4ade80','#60a5fa','#fb923c'];";
+	// Engine colors: 0=MT-32(cyan), 1=FluidSynth(magenta)
+	HTML += "const ENG_COLORS=['#22d3ee','#c084fc'];";
+	HTML += "var _chEng=new Array(16).fill(0);var _isMixer=false;";
 	// WHITE_ST: semitone offsets for the 7 white keys in an octave
 	// BLACK_ST: semitone offsets + fractional x position (0-7 white-key units) for 5 black keys
 	HTML += "const W_ST=[0,2,4,5,7,9,11];";
 	HTML += "const B_ST=[1,3,6,8,10];const B_XF=[0.6,1.6,3.6,4.6,5.6];";
+	HTML += "function _noteClr(ch,n){if(_isMixer)return ENG_COLORS[_chEng[ch]]||'#22d3ee';return SRC_COLORS[src_arr[ch][n]]||'#60a5fa';}";
 	HTML += "function _drawKb(){if(!_kbCtx)return;const W=_kbCanvas.width,H=_kbCanvas.height;";
 	HTML += "const octaves=10,ww=W/(octaves*7);_kbCtx.fillStyle='#0a1020';_kbCtx.fillRect(0,0,W,H);";
 	HTML += "for(let o=0;o<octaves;o++){for(let wi=0;wi<7;wi++){const n=o*12+W_ST[wi];if(n>=128)continue;";
-	HTML += "const x=(o*7+wi)*ww;let clr='#cbd5e1';";
-	HTML += "for(let ch=0;ch<16;ch++){if(_notes[ch][n]){clr=SRC_COLORS[src_arr[ch][n]]||'#60a5fa';break;}}";
-	HTML += "_kbCtx.fillStyle=clr;_kbCtx.fillRect(x+0.5,H*0.15,ww-1,H*0.84);}}";
+	HTML += "const x=(o*7+wi)*ww;let clr='#cbd5e1';let hitCh=-1;";
+	HTML += "for(let ch=0;ch<16;ch++){if(_notes[ch][n]){clr=_noteClr(ch,n);hitCh=ch;break;}}";
+	HTML += "_kbCtx.fillStyle=clr;_kbCtx.fillRect(x+0.5,H*0.15,ww-1,H*0.84);";
+	HTML += "if(hitCh>=0){_kbCtx.fillStyle='#fff';_kbCtx.font='bold '+Math.max(7,ww*0.6|0)+'px sans-serif';_kbCtx.textAlign='center';";
+	HTML += "_kbCtx.fillText(''+(hitCh+1),x+ww/2,H*0.85);}}}";
 	HTML += "for(let o=0;o<octaves;o++){for(let bi=0;bi<5;bi++){const n=o*12+B_ST[bi];if(n>=128)continue;";
 	HTML += "const x=(o*7+B_XF[bi])*ww;let clr='#1e293b';";
-	HTML += "for(let ch=0;ch<16;ch++){if(_notes[ch][n]){clr=SRC_COLORS[src_arr[ch][n]]||'#3b82f6';break;}}";
+	HTML += "for(let ch=0;ch<16;ch++){if(_notes[ch][n]){clr=_noteClr(ch,n);break;}}";
 	HTML += "_kbCtx.fillStyle=clr;_kbCtx.fillRect(x,0,ww*0.55,H*0.58);}}}";
 	HTML += "var _notes=Array.from({length:16},()=>new Uint8Array(128));";
 	HTML += "var src_arr=Array.from({length:16},()=>new Uint8Array(128));";
@@ -2441,7 +2826,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	HTML += "_prCtx.fillStyle='#0a1020';_prCtx.fillRect(0,0,W,H);";
 	HTML += "for(let col=0;col<PR_COLS;col++){const ci=(_prCol+col)%PR_COLS;";
 	HTML += "for(let note=0;note<128;note++){const v=_prBuf[ci*PR_ROWS+note];if(!v)continue;";
-	HTML += "_prCtx.fillStyle=SRC_COLORS[v]||'#60a5fa';";
+	HTML += "_prCtx.fillStyle=_isMixer?ENG_COLORS[v-1]||'#22d3ee':SRC_COLORS[v]||'#60a5fa';";
 	HTML += "_prCtx.fillRect(col*colW,H-(note+1)*rowH,colW-0.5,rowH-0.5);}}}";
 	HTML += "const ATK=0.3,DCY=0.07,PH=1200,PD=0.97;function _rf(ts){for(let i=0;i<16;i++){const t=_lt[i];_lv[i]=t>_lv[i]?_lv[i]+(t-_lv[i])*ATK:_lv[i]+(t-_lv[i])*DCY;if(_pt[i]>_pk[i]){_pk[i]=_pt[i];_pa[i]=ts;}else if(ts-_pa[i]>PH)_pk[i]*=PD;if(_f[i])_f[i].style.width=(_lv[i]*100).toFixed(1)+'%';if(_p[i])_p[i].style.left=(_pk[i]*100).toFixed(1)+'%';}";
 	HTML += "_drawKb();_drawPR();requestAnimationFrame(_rf);}";
@@ -2449,10 +2834,11 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	HTML += "_resizeCanvases();window.addEventListener('resize',_resizeCanvases);";
 	HTML += "requestAnimationFrame(_rf);";
 	HTML += "function applyWS(d){";
-	HTML += "if(d.channels){st.textContent='Synth: '+(d.synth||'?')+' | WS';for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_lt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_pt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));}}";
+	HTML += "if(d.channels){var _pn=['All MT-32','All Fluid','Split GM','Custom'];st.textContent='Synth: '+(d.synth||'?')+(d.mixer?' ['+(_pn[d.preset]||'Mixer')+']':'')+' | WS';for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_lt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_pt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));if(ch.eng!==undefined)_chEng[ch.ch]=ch.eng;}if(d.mixer!==undefined)_isMixer=d.mixer;";
+	HTML += "var EN=['M','F'];for(var i=0;i<16;i++){var lb=document.getElementById('mlbl-'+(i+1));if(lb){var tag=_isMixer?' '+EN[_chEng[i]]:'';lb.textContent='CH'+String(i+1).padStart(2,'0')+tag;lb.style.color=_isMixer?ENG_COLORS[_chEng[i]]:'#93c5fd';}}}";
 	HTML += "if(d.notes){for(var ch=0;ch<16;ch++){_notes[ch].fill(0);if(d.notes[ch])for(var j=0;j<d.notes[ch].length;j++){const n=d.notes[ch][j];_notes[ch][n]=1;src_arr[ch][n]=(d.src&&d.src[ch])||1;}}";
 	HTML += "_prCol=(_prCol+1)%PR_COLS;_prBuf.fill(0,_prCol*PR_ROWS,(_prCol+1)*PR_ROWS);";
-	HTML += "for(var ch=0;ch<16;ch++){if(d.notes[ch])for(var j=0;j<d.notes[ch].length;j++){const n=d.notes[ch][j];_prBuf[_prCol*PR_ROWS+n]=Math.max(_prBuf[_prCol*PR_ROWS+n],(d.src&&d.src[ch])||1);}}}";
+	HTML += "for(var ch=0;ch<16;ch++){if(d.notes[ch])for(var j=0;j<d.notes[ch].length;j++){const n=d.notes[ch][j];_prBuf[_prCol*PR_ROWS+n]=_isMixer?(_chEng[ch]+1):Math.max(_prBuf[_prCol*PR_ROWS+n],(d.src&&d.src[ch])||1);}}}";
 	HTML += "var b=document.getElementById('idx-seq-badge');if(b){var st2=d.playing?'playing':(d.finished?'finished':'stopped');b.textContent=st2==='playing'?'Playing':(st2==='finished'?'Finished':'Stopped');b.className='badge'+(st2==='playing'?' playing':(st2==='finished'?' finished':''));}";
 	HTML += "var sf=document.getElementById('idx-seq-file');if(sf)sf.textContent=d.file||'\\u2014';";
 	HTML += "var dur=d.duration_ms||1;var elp=d.finished?d.duration_ms:(d.elapsed_ms||0);";

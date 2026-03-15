@@ -28,6 +28,7 @@
 #include "lcd/barchars.h"
 #include "lcd/lcd.h"
 
+class CMT32Pi;
 class CSynthBase;
 class CSoundFontSynth;
 class CMT32Synth;
@@ -54,7 +55,7 @@ void EnterPowerSavingMode();
 void ExitPowerSavingMode();
 
 // Encoder menu
-void EnterMenu(CSoundFontSynth* pSF, CMT32Synth* pMT32, CSynthBase* pCurrent);
+void EnterMenu(CSoundFontSynth* pSF, CMT32Synth* pMT32, CSynthBase* pCurrent, CMT32Pi* pMT32Pi = nullptr);
 void ExitMenu();
 bool IsInMenu() const { return m_State == TState::InMenu; }
 bool MenuEncoderEvent(s8 nDelta);
@@ -144,6 +145,13 @@ int   m_nMenuMT32MIDIDelay; // 0=IMMEDIATE 1=SHORT 2=ALL
 int   m_nMenuMT32AnalogMode;   // 0=DIGITAL 1=COARSE 2=ACCURATE 3=OVERSAMPLED
 int   m_nMenuMT32RendererType; // 0=BIT16S 1=FLOAT
 int   m_nMenuMT32PartialCount;
+
+// Mixer menu state
+CMT32Pi* m_pMenuMT32Pi;
+bool  m_bMenuMixerEnabled;
+int   m_nMenuMixerPreset;    // TRouterPreset as int
+int   m_nMenuMixerMT32Vol;   // 0-100
+int   m_nMenuMixerFluidVol;  // 0-100
 };
 
 #endif

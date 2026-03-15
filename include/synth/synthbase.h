@@ -29,6 +29,7 @@
 #include "lcd/lcd.h"
 #include "lcd/ui.h"
 #include "midimonitor.h"
+#include "synth/synth.h"
 
 class CSynthBase
 {
@@ -52,6 +53,12 @@ public:
 	virtual size_t Render(float* pOutBuffer, size_t nFrames) = 0;
 	virtual void ReportStatus() const = 0;
 	virtual void UpdateLCD(CLCD& LCD, unsigned int nTicks) = 0;
+	virtual const char* GetName() const = 0;
+	virtual TSynth GetType() const = 0;
+
+	// Get instrument/preset name for a MIDI channel (0-15). Returns nullptr if unavailable.
+	virtual const char* GetChannelInstrumentName(u8 nChannel) { return nullptr; }
+
 	void SetUserInterface(CUserInterface* pUI) { m_pUI = pUI; }
 
 	CSpinLock m_Lock;

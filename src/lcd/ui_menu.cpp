@@ -10,6 +10,8 @@
 #include <circle/logger.h>
 
 #include "lcd/ui.h"
+#include <circle/serial.h>
+#include "mt32pi.h"
 #include "synth/mt32synth.h"
 #include "synth/soundfontsynth.h"
 #include "utility.h"
@@ -22,15 +24,19 @@
 // ---------------------------------------------------------------------------
 
 static constexpr size_t MenuVisibleRows = 4;
+static constexpr size_t MixerMenuItems  = 4;
 
-// Number of menu items per synth
+// Number of menu items per synth (+ mixer items always appended)
 static size_t GetMenuItemCount(const CSynthBase* pCurrent,
                                CSoundFontSynth* pSF,
-                               CMT32Synth* pMT32)
+                               CMT32Synth* pMT32,
+                               CMT32Pi* pMT32Pi)
 {
-	if (pCurrent == pSF && pSF)    return 12;
-	if (pCurrent == pMT32 && pMT32) return 12;
-	return 0;
+	size_t n = 0;
+	if (pCurrent == pSF && pSF)    n = 12;
+	else if (pCurrent == pMT32 && pMT32) n = 12;
+	if (n > 0 && pMT32Pi) n += MixerMenuItems;
+	return n;
 }
 
 // Label for item nItem
@@ -58,6 +64,13 @@ static const char* GetMenuItemLabel(const CSynthBase* pCurrent,
 		return (nItem < 12) ? mt32Labels[nItem] : nullptr;
 	}
 	return nullptr;
+}
+
+static const char* GetMixerMenuItemLabel(size_t nMixerIdx)
+{
+	static const char* mixerLabels[] =
+		{ "Mixer", "Preset", "MT32 Vol", "Fluid Vol" };
+	return (nMixerIdx < MixerMenuItems) ? mixerLabels[nMixerIdx] : nullptr;
 }
 
 // Formatted value string for item nItem
@@ -163,11 +176,12 @@ static void FormatMenuValue(char* pBuf, size_t nBufSize,
 // ---------------------------------------------------------------------------
 
 void CUserInterface::EnterMenu(CSoundFontSynth* pSF, CMT32Synth* pMT32,
-                               CSynthBase* pCurrent)
+                               CSynthBase* pCurrent, CMT32Pi* pMT32Pi)
 {
 	m_pMenuSF           = pSF;
 	m_pMenuMT32         = pMT32;
 	m_pMenuCurrentSynth = pCurrent;
+	m_pMenuMT32Pi       = pMT32Pi;
 	m_nMenuCursor       = 0;
 	m_nMenuScroll       = 0;
 	m_bMenuEditing      = false;
@@ -217,6 +231,16 @@ void CUserInterface::EnterMenu(CSoundFontSynth* pSF, CMT32Synth* pMT32,
 		m_nMenuMT32PartialCount  = static_cast<int>(pMT32->GetPartialCount());
 	}
 
+	// Initialize mixer values
+	if (pMT32Pi)
+	{
+		const auto ms = pMT32Pi->GetMixerStatus();
+		m_bMenuMixerEnabled  = ms.bEnabled;
+		m_nMenuMixerPreset   = ms.nPreset;
+		m_nMenuMixerMT32Vol  = static_cast<int>(ms.fMT32Volume * 100.0f + 0.5f);
+		m_nMenuMixerFluidVol = static_cast<int>(ms.fFluidVolume * 100.0f + 0.5f);
+	}
+
 	m_State = TState::InMenu;
 }
 
@@ -231,14 +255,38 @@ bool CUserInterface::MenuEncoderEvent(s8 nDelta)
 		return false;
 
 	const size_t nItems =
-		GetMenuItemCount(m_pMenuCurrentSynth, m_pMenuSF, m_pMenuMT32);
+		GetMenuItemCount(m_pMenuCurrentSynth, m_pMenuSF, m_pMenuMT32, m_pMenuMT32Pi);
 	if (nItems == 0)
 		return true;
 
 	if (m_bMenuEditing)
 	{
-		// Edit mode: adjust the selected item's value
-		if (m_pMenuCurrentSynth == m_pMenuSF && m_pMenuSF)
+		// Mixer items (appended after synth items)
+		const size_t nSynthItems = m_pMenuMT32Pi ? (nItems - MixerMenuItems) : nItems;
+		if (m_nMenuCursor >= nSynthItems && m_pMenuMT32Pi)
+		{
+			switch (m_nMenuCursor - nSynthItems)
+			{
+			case 0: // Mixer ON/OFF
+				m_bMenuMixerEnabled = !m_bMenuMixerEnabled;
+				m_pMenuMT32Pi->SetMixerEnabled(m_bMenuMixerEnabled);
+				break;
+			case 1: // Preset (0-3)
+				m_nMenuMixerPreset = (m_nMenuMixerPreset + nDelta + 4) % 4;
+				m_pMenuMT32Pi->SetMixerPreset(m_nMenuMixerPreset);
+				break;
+			case 2: // MT32 Vol [0-100]
+				m_nMenuMixerMT32Vol = Utility::Clamp(m_nMenuMixerMT32Vol + nDelta, 0, 100);
+				m_pMenuMT32Pi->SetMixerEngineVolume("mt32", m_nMenuMixerMT32Vol);
+				break;
+			case 3: // Fluid Vol [0-100]
+				m_nMenuMixerFluidVol = Utility::Clamp(m_nMenuMixerFluidVol + nDelta, 0, 100);
+				m_pMenuMT32Pi->SetMixerEngineVolume("fluidsynth", m_nMenuMixerFluidVol);
+				break;
+			default: break;
+			}
+		}
+		else if (m_pMenuCurrentSynth == m_pMenuSF && m_pMenuSF)
 		{
 			switch (m_nMenuCursor)
 			{
@@ -424,7 +472,8 @@ void CUserInterface::DrawMenu(CLCD& LCD) const
 	}
 
 	const size_t nItems =
-		GetMenuItemCount(m_pMenuCurrentSynth, m_pMenuSF, m_pMenuMT32);
+		GetMenuItemCount(m_pMenuCurrentSynth, m_pMenuSF, m_pMenuMT32, m_pMenuMT32Pi);
+	const size_t nSynthItems = m_pMenuMT32Pi ? (nItems > MixerMenuItems ? nItems - MixerMenuItems : 0) : nItems;
 
 	for (size_t i = 0; i < MenuVisibleRows; ++i)
 	{
@@ -432,27 +481,51 @@ void CUserInterface::DrawMenu(CLCD& LCD) const
 		if (nItemIdx >= nItems)
 			break;
 
-		const char* pLabel =
-			GetMenuItemLabel(m_pMenuCurrentSynth, m_pMenuSF, m_pMenuMT32, nItemIdx);
+		const char* pLabel = nullptr;
+		char valBuf[7] = "";
+
+		if (nItemIdx >= nSynthItems)
+		{
+			// Mixer item
+			const size_t nMixerIdx = nItemIdx - nSynthItems;
+			pLabel = GetMixerMenuItemLabel(nMixerIdx);
+			switch (nMixerIdx)
+			{
+			case 0: snprintf(valBuf, sizeof(valBuf), "%s", m_bMenuMixerEnabled ? "ON" : "OFF"); break;
+			case 1:
+			{
+				static const char* presets[] = { "MT32", "Fluid", "Split", "Cust" };
+				snprintf(valBuf, sizeof(valBuf), "%s",
+					(m_nMenuMixerPreset >= 0 && m_nMenuMixerPreset < 4) ? presets[m_nMenuMixerPreset] : "?");
+				break;
+			}
+			case 2: snprintf(valBuf, sizeof(valBuf), "%d%%", m_nMenuMixerMT32Vol); break;
+			case 3: snprintf(valBuf, sizeof(valBuf), "%d%%", m_nMenuMixerFluidVol); break;
+			default: break;
+			}
+		}
+		else
+		{
+			pLabel = GetMenuItemLabel(m_pMenuCurrentSynth, m_pMenuSF, m_pMenuMT32, nItemIdx);
+			FormatMenuValue(valBuf, sizeof(valBuf),
+			                m_pMenuCurrentSynth, m_pMenuSF, m_pMenuMT32,
+			                nItemIdx,
+			                m_fMenuGain,
+			                m_bMenuReverbActive, m_fMenuReverbRoomSize, m_fMenuReverbLevel,
+			                m_fMenuReverbDamping, m_fMenuReverbWidth,
+			                m_bMenuChorusActive, m_fMenuChorusDepth,
+			                m_fMenuChorusLevel, m_nMenuChorusVoices, m_fMenuChorusSpeed,
+			                m_nMenuROMSet, m_nMenuSoundFont,
+			                m_fMenuMT32Gain, m_fMenuMT32ReverbGain,
+			                m_bMenuMT32ReverbEnabled,
+			                m_bMenuMT32NiceAmpRamp, m_bMenuMT32NicePanning, m_bMenuMT32NicePartMix,
+			                m_nMenuMT32DACMode, m_nMenuMT32MIDIDelay,
+			                m_nMenuMT32AnalogMode, m_nMenuMT32RendererType,
+			                m_nMenuMT32PartialCount);
+		}
+
 		if (!pLabel)
 			break;
-
-		char valBuf[7] = "";
-		FormatMenuValue(valBuf, sizeof(valBuf),
-		                m_pMenuCurrentSynth, m_pMenuSF, m_pMenuMT32,
-		                nItemIdx,
-		                m_fMenuGain,
-		                m_bMenuReverbActive, m_fMenuReverbRoomSize, m_fMenuReverbLevel,
-		                m_fMenuReverbDamping, m_fMenuReverbWidth,
-		                m_bMenuChorusActive, m_fMenuChorusDepth,
-		                m_fMenuChorusLevel, m_nMenuChorusVoices, m_fMenuChorusSpeed,
-		                m_nMenuROMSet, m_nMenuSoundFont,
-		                m_fMenuMT32Gain, m_fMenuMT32ReverbGain,
-		                m_bMenuMT32ReverbEnabled,
-		                m_bMenuMT32NiceAmpRamp, m_bMenuMT32NicePanning, m_bMenuMT32NicePartMix,
-		                m_nMenuMT32DACMode, m_nMenuMT32MIDIDelay,
-		                m_nMenuMT32AnalogMode, m_nMenuMT32RendererType,
-		                m_nMenuMT32PartialCount);
 
 		// 20-char row: selector(1) + label(13) + value(6)
 		char rowBuf[21];

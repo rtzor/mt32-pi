@@ -556,3 +556,22 @@ void CMT32Synth::onDeviceReset()
 	m_MIDIMonitor.AllNotesOff();
 	m_MIDIMonitor.ResetControllers(false);
 }
+
+const char* CMT32Synth::GetChannelInstrumentName(u8 nChannel)
+{
+	if (!m_pSynth || nChannel >= 16)
+		return nullptr;
+
+	// Read current MIDI channel → part mapping from MT-32 memory
+	u8 MIDIChannelPartMap[9];
+	m_pSynth->readMemory(MemoryAddressMIDIChannels, 9, MIDIChannelPartMap);
+
+	// Find which part (0-8) is assigned to this MIDI channel
+	for (u8 nPart = 0; nPart < 9; ++nPart)
+	{
+		if (MIDIChannelPartMap[nPart] == nChannel)
+			return m_pSynth->getPatchName(nPart);
+	}
+
+	return nullptr;
+}

@@ -126,6 +126,12 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_pCurrentSynth(nullptr),
 	  m_pMT32Synth(nullptr),
 	  m_pSoundFontSynth(nullptr),
+	  m_bMixerEnabled(false),
+	  m_nRenderUs(0),
+	  m_nRenderAvgUs(0),
+	  m_nRenderPeakUs(0),
+	  m_nDeadlineUs(0),
+	  m_bAutoReducePartials(true),
 	  m_bMenuLongPressConsumed(false),
 
 	  m_pSequencer(nullptr),
@@ -323,6 +329,9 @@ bool CMT32Pi::Initialize(bool bSerialMIDIAvailable)
 			return false;
 		}
 	}
+
+	// Initialize MIDI Router + Audio Mixer
+	SetupMixerRouting();
 
 	if (m_pPisound)
 		LOGNOTE("Using Pisound MIDI interface");
@@ -849,6 +858,34 @@ void CMT32Pi::GetMIDIChannelLevels(float* pOutLevels, float* pOutPeaks) const
 		pOutPeaks[nChannel] = 0.0f;
 	}
 
+	// In mixer dual mode, merge levels from both synths
+	if (m_bMixerEnabled && m_MIDIRouter.IsDualMode())
+	{
+		const unsigned nTicks = CTimer::GetClockTicks();
+		float mt32Levels[16] = {}, mt32Peaks[16] = {};
+		float fluidLevels[16] = {}, fluidPeaks[16] = {};
+
+		if (m_pMT32Synth)
+		{
+			m_pMT32Synth->m_Lock.Acquire();
+			m_pMT32Synth->m_MIDIMonitor.GetChannelLevels(nTicks, mt32Levels, mt32Peaks);
+			m_pMT32Synth->m_Lock.Release();
+		}
+		if (m_pSoundFontSynth)
+		{
+			m_pSoundFontSynth->m_Lock.Acquire();
+			m_pSoundFontSynth->m_MIDIMonitor.GetChannelLevels(nTicks, fluidLevels, fluidPeaks);
+			m_pSoundFontSynth->m_Lock.Release();
+		}
+
+		for (size_t i = 0; i < 16; ++i)
+		{
+			pOutLevels[i] = Utility::Max(mt32Levels[i], fluidLevels[i]);
+			pOutPeaks[i]  = Utility::Max(mt32Peaks[i],  fluidPeaks[i]);
+		}
+		return;
+	}
+
 	if (!m_pCurrentSynth)
 		return;
 
@@ -1029,7 +1066,36 @@ s8 IntBuffer[nQueueSizeFrames * nBytesPerFrame + (bI2S ? 0 : 1)];
 		const size_t nFrames = nQueueSizeFrames - m_pSound->GetQueueFramesAvail();
 		const size_t nWriteBytes = nFrames * nBytesPerFrame;
 
-		m_pCurrentSynth->Render(FloatBuffer, nFrames);
+		// Compute deadline for this chunk (µs)
+		const unsigned nDeadline = static_cast<unsigned>(nFrames * 1000000ULL / m_pConfig->AudioSampleRate);
+		m_nDeadlineUs = nDeadline;
+
+		// Measure render time
+		const unsigned nStart = CTimer::GetClockTicks();
+
+		if (m_bMixerEnabled)
+			m_AudioMixer.Render(FloatBuffer, nFrames);
+		else
+			m_pCurrentSynth->Render(FloatBuffer, nFrames);
+
+		const unsigned nElapsed = CTimer::GetClockTicks() - nStart;
+		m_nRenderUs = nElapsed;
+
+		// Exponential moving average (alpha ≈ 1/16)
+		m_nRenderAvgUs = m_nRenderAvgUs - (m_nRenderAvgUs >> 4) + (nElapsed >> 4);
+
+		// Track peak
+		if (nElapsed > m_nRenderPeakUs)
+			m_nRenderPeakUs = nElapsed;
+
+		// Auto polyphony reduction: if avg > 90% of deadline, halve MT-32 partials
+		if (m_bAutoReducePartials && nDeadline > 0 && m_nRenderAvgUs > (nDeadline * 9 / 10))
+		{
+			const int nCurrent = GetMT32PartialCount();
+			if (nCurrent > 8)
+				SetMT32PartialCount(nCurrent / 2);
+			m_bAutoReducePartials = false;  // one-shot per overload episode
+		}
 
 		if (bReversedStereo)
 		{
@@ -1327,7 +1393,10 @@ void CMT32Pi::OnShortMessage(u32 nMessage)
 	if ((nMessage & 0xFF) < 0xF0)
 		LEDOn();
 
-	m_pCurrentSynth->HandleMIDIShortMessage(nMessage);
+	if (m_bMixerEnabled)
+		m_MIDIRouter.RouteShortMessage(nMessage);
+	else
+		m_pCurrentSynth->HandleMIDIShortMessage(nMessage);
 
 	// Wake from power saving mode if necessary
 	Awaken();
@@ -1340,7 +1409,12 @@ void CMT32Pi::OnSysExMessage(const u8* pData, size_t nSize)
 
 	// If we don't consume the SysEx message, forward it to the synthesizer
 	if (!ParseCustomSysEx(pData, nSize))
-		m_pCurrentSynth->HandleMIDISysExMessage(pData, nSize);
+	{
+		if (m_bMixerEnabled)
+			m_MIDIRouter.RouteSysEx(pData, nSize);
+		else
+			m_pCurrentSynth->HandleMIDISysExMessage(pData, nSize);
+	}
 
 	// Wake from power saving mode if necessary
 	Awaken();
@@ -1777,7 +1851,7 @@ void CMT32Pi::ProcessButtonEvent(const TButtonEvent& Event)
 			if (m_UserInterface.IsInMenu())
 				m_UserInterface.MenuBackEvent();
 			else
-				m_UserInterface.EnterMenu(m_pSoundFontSynth, m_pMT32Synth, m_pCurrentSynth);
+				m_UserInterface.EnterMenu(m_pSoundFontSynth, m_pMT32Synth, m_pCurrentSynth, this);
 		}
 		else if (!Event.bPressed)
 		{
@@ -1793,11 +1867,29 @@ void CMT32Pi::ProcessButtonEvent(const TButtonEvent& Event)
 
 	if (Event.Button == TButton::Button1 && !Event.bRepeat)
 	{
-		// Swap synths
-		if (m_pCurrentSynth == m_pMT32Synth)
-			SwitchSynth(TSynth::SoundFont);
+		if (m_bMixerEnabled)
+		{
+			// Cycle through mixer presets
+			static const char* PresetNames[] = {
+				"All MT-32",
+				"All FluidSynth",
+				"Split GM",
+				"Custom"
+			};
+			const int nCurrent = static_cast<int>(m_MIDIRouter.GetPreset());
+			const int nNext = (nCurrent + 1) % 4;
+			SetMixerPreset(nNext);
+			LOGNOTE("Mixer preset: %s", PresetNames[nNext]);
+			LCDLog(TLCDLogType::Notice, PresetNames[nNext]);
+		}
 		else
-			SwitchSynth(TSynth::MT32);
+		{
+			// Swap synths
+			if (m_pCurrentSynth == m_pMT32Synth)
+				SwitchSynth(TSynth::SoundFont);
+			else
+				SwitchSynth(TSynth::MT32);
+		}
 	}
 	else if (Event.Button == TButton::Button2 && !Event.bRepeat)
 	{
@@ -1839,6 +1931,305 @@ void CMT32Pi::ProcessButtonEvent(const TButtonEvent& Event)
 	}
 }
 
+void CMT32Pi::SetupMixerRouting()
+{
+	// Register available engines in router and mixer
+	if (m_pMT32Synth)
+	{
+		m_MIDIRouter.SetMT32Engine(m_pMT32Synth);
+		m_AudioMixer.AddEngine(m_pMT32Synth);
+	}
+	if (m_pSoundFontSynth)
+	{
+		m_MIDIRouter.SetFluidSynthEngine(m_pSoundFontSynth);
+		m_AudioMixer.AddEngine(m_pSoundFontSynth);
+	}
+
+	m_bMixerEnabled = m_pConfig->MixerEnabled;
+
+	if (m_bMixerEnabled)
+	{
+		// Apply routing preset from config
+		// TMixerMode enum values match TRouterPreset order
+		const TRouterPreset Preset = static_cast<TRouterPreset>(m_pConfig->MixerMode);
+		m_MIDIRouter.ApplyPreset(Preset);
+
+		// Apply per-engine volume (config is 0-100 int → 0.0-1.0 float)
+		if (m_pMT32Synth)
+		{
+			m_AudioMixer.SetEngineVolume(m_pMT32Synth, m_pConfig->MixerMT32Volume / 100.0f);
+			m_AudioMixer.SetEnginePan(m_pMT32Synth, m_pConfig->MixerMT32Pan / 100.0f);
+		}
+		if (m_pSoundFontSynth)
+		{
+			m_AudioMixer.SetEngineVolume(m_pSoundFontSynth, m_pConfig->MixerFluidSynthVolume / 100.0f);
+			m_AudioMixer.SetEnginePan(m_pSoundFontSynth, m_pConfig->MixerFluidSynthPan / 100.0f);
+		}
+
+		// If only one engine routes, optimize with solo bypass
+		if (!m_MIDIRouter.IsDualMode())
+			m_AudioMixer.SetSoloEngine(m_pCurrentSynth);
+		else
+			ApplyDualModeLimits(true);
+
+		LOGNOTE("Mixer enabled (mode: %d)", static_cast<int>(m_pConfig->MixerMode));
+	}
+	else
+	{
+		// Classic single-engine mode
+		if (m_pCurrentSynth == m_pMT32Synth)
+			m_MIDIRouter.ApplyPreset(TRouterPreset::SingleMT32);
+		else
+			m_MIDIRouter.ApplyPreset(TRouterPreset::SingleFluid);
+
+		m_AudioMixer.SetSoloEngine(m_pCurrentSynth);
+		LOGNOTE("Mixer disabled (classic single-synth mode)");
+	}
+}
+
+void CMT32Pi::ApplyDualModeLimits(bool bDual)
+{
+	if (!m_pSoundFontSynth)
+		return;
+
+	if (bDual)
+	{
+		LOGNOTE("Dual mode active — applying performance limits");
+		// Disable FluidSynth chorus to save CPU
+		m_pSoundFontSynth->SetChorusActive(false);
+		// TODO: reduce polyphony when CSoundFontSynth exposes SetPolyphony()
+	}
+	else
+	{
+		LOGNOTE("Single mode — restoring default performance");
+		// Restore chorus to config value
+		m_pSoundFontSynth->SetChorusActive(m_pConfig->FluidSynthDefaultChorusActive);
+	}
+}
+
+CMT32Pi::TMixerStatus CMT32Pi::GetMixerStatus() const
+{
+	TMixerStatus s;
+	s.bEnabled    = m_bMixerEnabled;
+	s.nPreset     = static_cast<int>(m_MIDIRouter.GetPreset());
+	s.bDualMode   = m_MIDIRouter.IsDualMode();
+	s.fMasterVolume = m_AudioMixer.GetMasterVolume();
+
+	s.fMT32Volume  = m_pMT32Synth      ? m_AudioMixer.GetEngineVolume(m_pMT32Synth)      : 0.0f;
+	s.fFluidVolume = m_pSoundFontSynth  ? m_AudioMixer.GetEngineVolume(m_pSoundFontSynth) : 0.0f;
+	s.fMT32Pan     = m_pMT32Synth      ? m_AudioMixer.GetEnginePan(m_pMT32Synth)         : 0.0f;
+	s.fFluidPan    = m_pSoundFontSynth  ? m_AudioMixer.GetEnginePan(m_pSoundFontSynth)    : 0.0f;
+
+	for (unsigned i = 0; i < 16; ++i)
+	{
+		s.pChannelEngine[i] = m_MIDIRouter.GetChannelEngineName(static_cast<u8>(i));
+		s.nChannelRemap[i]  = m_MIDIRouter.GetChannelRemap(static_cast<u8>(i));
+		s.bLayered[i]       = m_MIDIRouter.GetLayering(static_cast<u8>(i));
+
+		CSynthBase* pEng = m_MIDIRouter.GetChannelEngine(static_cast<u8>(i));
+		const u8 nRemapped = m_MIDIRouter.GetChannelRemap(static_cast<u8>(i));
+		s.pChannelInstrument[i] = pEng ? pEng->GetChannelInstrumentName(nRemapped) : nullptr;
+	}
+
+	// Audio render performance
+	s.nRenderUs      = m_nRenderUs;
+	s.nRenderAvgUs   = m_nRenderAvgUs;
+	s.nRenderPeakUs  = m_nRenderPeakUs;
+	s.nDeadlineUs    = m_nDeadlineUs;
+	s.nCpuLoadPercent = m_nDeadlineUs > 0
+		? static_cast<unsigned>(m_nRenderAvgUs * 100U / m_nDeadlineUs) : 0;
+
+	return s;
+}
+
+bool CMT32Pi::SetMixerEnabled(bool bEnabled)
+{
+	m_bMixerEnabled = bEnabled;
+
+	if (bEnabled)
+	{
+		// Check dual mode and apply limits
+		if (m_MIDIRouter.IsDualMode())
+		{
+			m_AudioMixer.ClearSoloEngine();
+			ApplyDualModeLimits(true);
+		}
+		else
+		{
+			m_AudioMixer.SetSoloEngine(m_pCurrentSynth);
+		}
+	}
+	else
+	{
+		// Revert to classic single mode
+		if (m_pCurrentSynth == m_pMT32Synth)
+			m_MIDIRouter.ApplyPreset(TRouterPreset::SingleMT32);
+		else
+			m_MIDIRouter.ApplyPreset(TRouterPreset::SingleFluid);
+
+		m_AudioMixer.SetSoloEngine(m_pCurrentSynth);
+		ApplyDualModeLimits(false);
+	}
+
+	return true;
+}
+
+bool CMT32Pi::SetMixerPreset(int nPreset)
+{
+	if (nPreset < 0 || nPreset > static_cast<int>(TRouterPreset::Custom))
+		return false;
+
+	const TRouterPreset Preset = static_cast<TRouterPreset>(nPreset);
+
+	// Silence both engines before applying new routing to prevent stuck notes
+	if (m_pMT32Synth)
+		m_pMT32Synth->AllSoundOff();
+	if (m_pSoundFontSynth)
+		m_pSoundFontSynth->AllSoundOff();
+
+	m_MIDIRouter.ApplyPreset(Preset);
+	m_MIDIRouter.ResetChannelRemap();
+
+	// Sync m_pCurrentSynth for single-engine presets so Sound page stays in sync
+	if (Preset == TRouterPreset::SingleMT32 && m_pMT32Synth)
+		m_pCurrentSynth = m_pMT32Synth;
+	else if (Preset == TRouterPreset::SingleFluid && m_pSoundFontSynth)
+		m_pCurrentSynth = m_pSoundFontSynth;
+
+	// Update dual mode state
+	const bool bDual = m_MIDIRouter.IsDualMode();
+	if (bDual)
+		m_AudioMixer.ClearSoloEngine();
+	else
+		m_AudioMixer.SetSoloEngine(m_MIDIRouter.GetPrimaryEngine());
+
+	ApplyDualModeLimits(bDual);
+	return true;
+}
+
+bool CMT32Pi::SetMixerChannelEngine(u8 nChannel, const char* pEngineName)
+{
+	if (nChannel >= 16 || !pEngineName)
+		return false;
+
+	CSynthBase* pEngine = nullptr;
+	if (strcmp(pEngineName, "mt32") == 0 || strcmp(pEngineName, "MT-32") == 0)
+		pEngine = m_pMT32Synth;
+	else if (strcmp(pEngineName, "fluidsynth") == 0 || strcmp(pEngineName, "FluidSynth") == 0)
+		pEngine = m_pSoundFontSynth;
+	else
+		return false;
+
+	if (!pEngine)
+		return false;
+
+	// Send All Sound Off to the old engine for this channel to prevent stuck notes
+	CSynthBase* pOldEngine = m_MIDIRouter.GetChannelEngine(nChannel);
+	if (pOldEngine && pOldEngine != pEngine)
+	{
+		const u8 nRemap = m_MIDIRouter.GetChannelRemap(nChannel);
+		// CC 120 (All Sound Off) on the remapped channel
+		const u32 nAllSoundOff = 0x007800B0u | nRemap;
+		pOldEngine->HandleMIDIShortMessage(nAllSoundOff);
+		// CC 123 (All Notes Off) as well
+		const u32 nAllNotesOff = 0x007B00B0u | nRemap;
+		pOldEngine->HandleMIDIShortMessage(nAllNotesOff);
+	}
+
+	m_MIDIRouter.SetChannelEngine(nChannel, pEngine);
+
+	// Update dual mode state
+	const bool bDual = m_MIDIRouter.IsDualMode();
+	if (bDual)
+		m_AudioMixer.ClearSoloEngine();
+	else
+		m_AudioMixer.SetSoloEngine(m_MIDIRouter.GetPrimaryEngine());
+
+	ApplyDualModeLimits(bDual);
+	return true;
+}
+
+bool CMT32Pi::SetMixerChannelRemap(u8 nChannel, u8 nTargetChannel)
+{
+	if (nChannel >= 16 || nTargetChannel >= 16)
+		return false;
+
+	m_MIDIRouter.SetChannelRemap(nChannel, nTargetChannel);
+	return true;
+}
+
+bool CMT32Pi::SetMixerEngineVolume(const char* pEngineName, int nVolumePercent)
+{
+	if (!pEngineName || nVolumePercent < 0 || nVolumePercent > 100)
+		return false;
+
+	CSynthBase* pEngine = nullptr;
+	if (strcmp(pEngineName, "mt32") == 0)
+		pEngine = m_pMT32Synth;
+	else if (strcmp(pEngineName, "fluidsynth") == 0)
+		pEngine = m_pSoundFontSynth;
+	else
+		return false;
+
+	if (!pEngine)
+		return false;
+
+	m_AudioMixer.SetEngineVolume(pEngine, nVolumePercent / 100.0f);
+	return true;
+}
+
+bool CMT32Pi::SetMixerEnginePan(const char* pEngineName, int nPanPercent)
+{
+	if (!pEngineName || nPanPercent < -100 || nPanPercent > 100)
+		return false;
+
+	CSynthBase* pEngine = nullptr;
+	if (strcmp(pEngineName, "mt32") == 0)
+		pEngine = m_pMT32Synth;
+	else if (strcmp(pEngineName, "fluidsynth") == 0)
+		pEngine = m_pSoundFontSynth;
+	else
+		return false;
+
+	if (!pEngine)
+		return false;
+
+	m_AudioMixer.SetEnginePan(pEngine, nPanPercent / 100.0f);
+	return true;
+}
+
+bool CMT32Pi::SetMixerCCFilter(unsigned nEngine, u8 nCC, bool bAllow)
+{
+	if (nEngine >= CMIDIRouter::MaxEngines || nCC >= CMIDIRouter::NumCCs)
+		return false;
+	m_MIDIRouter.SetCCFilter(nEngine, nCC, bAllow);
+	return true;
+}
+
+bool CMT32Pi::GetMixerCCFilter(unsigned nEngine, u8 nCC) const
+{
+	return m_MIDIRouter.GetCCFilter(nEngine, nCC);
+}
+
+void CMT32Pi::ResetMixerCCFilters()
+{
+	m_MIDIRouter.ResetCCFilters();
+}
+
+bool CMT32Pi::SetMixerLayering(u8 nChannel, bool bLayered)
+{
+	if (nChannel >= 16)
+		return false;
+	m_MIDIRouter.SetLayering(nChannel, bLayered);
+	return true;
+}
+
+bool CMT32Pi::SetMixerAllLayering(bool bLayered)
+{
+	m_MIDIRouter.SetAllLayering(bLayered);
+	return true;
+}
+
 void CMT32Pi::SwitchSynth(TSynth NewSynth)
 {
 	CSynthBase* pNewSynth = nullptr;
@@ -1865,6 +2256,18 @@ void CMT32Pi::SwitchSynth(TSynth NewSynth)
 	const char* pMode = NewSynth == TSynth::MT32 ? "MT-32 mode" : "SoundFont mode";
 	LOGNOTE("Switching to %s", pMode);
 	LCDLog(TLCDLogType::Notice, pMode);
+
+	// Update router and mixer to single-engine mode
+	if (m_bMixerEnabled)
+	{
+		if (NewSynth == TSynth::MT32)
+			m_MIDIRouter.ApplyPreset(TRouterPreset::SingleMT32);
+		else
+			m_MIDIRouter.ApplyPreset(TRouterPreset::SingleFluid);
+
+		m_AudioMixer.SetSoloEngine(pNewSynth);
+		ApplyDualModeLimits(false);
+	}
 }
 
 void CMT32Pi::SwitchMT32ROMSet(TMT32ROMSet ROMSet)

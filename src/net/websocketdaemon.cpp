@@ -130,25 +130,32 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 	u8 activeNotes[16][128];
 	pPi->GetActiveNotes(activeNotes);
 
+	CMT32Pi::TMixerStatus ms = pPi->GetMixerStatus();
+
 	int n = snprintf(buf, bufSize,
 		"{\"playing\":%s,\"finished\":%s,\"loop_enabled\":%s,"
 		"\"file\":\"%s\",\"duration_ms\":%u,\"elapsed_ms\":%u,"
-		"\"synth\":\"%s\",\"channels\":[",
+		"\"synth\":\"%s\",\"mixer\":%s,\"preset\":%d,\"channels\":[",
 		s.bPlaying     ? "true" : "false",
 		s.bFinished    ? "true" : "false",
 		s.bLoopEnabled ? "true" : "false",
 		s.pFile ? s.pFile : "",
 		s.nDurationMs, s.nElapsedMs,
-		pPi->GetActiveSynthName());
+		pPi->GetActiveSynthName(),
+		ms.bEnabled ? "true" : "false",
+		ms.nPreset);
 
 	if (n <= 0 || (size_t)n >= bufSize) return -1;
 
+	// eng: 0=MT-32, 1=FluidSynth (derived from engine name string)
 	for (int i = 0; i < 16; i++)
 	{
+		const char* pEng = ms.pChannelEngine[i];
+		int nEng = (pEng && pEng[0] == 'F') ? 1 : 0;  // "FluidSynth" vs "MT-32"
 		int added = snprintf(buf + n, bufSize - n,
-			"%s{\"ch\":%d,\"lv\":%.3f,\"pk\":%.3f}",
+			"%s{\"ch\":%d,\"lv\":%.3f,\"pk\":%.3f,\"eng\":%d}",
 			i > 0 ? "," : "", i,
-			(double)levels[i], (double)peaks[i]);
+			(double)levels[i], (double)peaks[i], nEng);
 		if (added <= 0 || (size_t)(n + added) >= bufSize) return -1;
 		n += added;
 	}
@@ -201,9 +208,14 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 		}
 	}
 
-	int tail = snprintf(buf + n, bufSize - n, "]}");
-	if (tail <= 0) return -1;
-	return n + tail;
+	// Audio render performance
+	{
+		int added = snprintf(buf + n, bufSize - n,
+			"],\"render_us\":%u,\"render_avg_us\":%u,\"cpu_load\":%u}",
+			ms.nRenderUs, ms.nRenderAvgUs, ms.nCpuLoadPercent);
+		if (added <= 0) return -1;
+		return n + added;
+	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -291,7 +303,7 @@ static void HandleConnection(CSocket* pSock, CMT32Pi* pMT32Pi)
 	{
 		unsigned nLastPush = 0;
 		u8 framePay[512];
-		char jsonBuf[2048];  // seq status + 16 channels + notes[]
+		char jsonBuf[2560];  // seq status + 16 channels + notes[] + engine routing
 
 		while (true)
 		{

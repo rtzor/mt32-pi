@@ -726,3 +726,15 @@ void CSoundFontSynth::SetChorusSpeed(float nSpeed)
 		fluid_synth_set_chorus_group_speed(m_pSynth, -1, nSpeed);
 	m_Lock.Release();
 }
+
+const char* CSoundFontSynth::GetChannelInstrumentName(u8 nChannel)
+{
+	if (!m_pSynth || nChannel >= 16)
+		return nullptr;
+
+	fluid_preset_t* pPreset = fluid_synth_get_channel_preset(m_pSynth, nChannel);
+	if (!pPreset)
+		return nullptr;
+
+	return fluid_preset_get_name(pPreset);
+}

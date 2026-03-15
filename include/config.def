@@ -98,6 +98,15 @@ CFG(rotation,			TLCDRotation,			LCDRotation,				TLCDRotation::Normal				)
 CFG(mirror,			TLCDMirror,			LCDMirror,				TLCDMirror::Normal				)
 END_SECTION
 
+BEGIN_SECTION(mixer)
+CFG(enabled,			bool,				MixerEnabled,				false						)
+CFG(mode,			TMixerMode,			MixerMode,				TMixerMode::SingleMT32				)
+CFG(mt32_volume,		int,				MixerMT32Volume,			80						)
+CFG(fluidsynth_volume,		int,				MixerFluidSynthVolume,			80						)
+CFG(mt32_pan,			int,				MixerMT32Pan,				0						)
+CFG(fluidsynth_pan,		int,				MixerFluidSynthPan,			0						)
+END_SECTION
+
 BEGIN_SECTION(network)
 CFG(mode,			TNetworkMode,			NetworkMode,				TNetworkMode::Off				)
 CFG(dhcp,			bool,				NetworkDHCP,				true						)
