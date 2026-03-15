@@ -19,14 +19,17 @@ OBJS		:=	src/config.o \
 			src/lcd/ui.o \
 			src/lcd/ui_menu.o \
 			src/main.o \
+			src/midisequencer.o \
 			src/midimonitor.o \
 			src/midiparser.o \
 			src/mt32pi.o \
 			src/net/applemidi.o \
 			src/net/ftpdaemon.o \
 			src/net/ftpworker.o \
+			src/net/sha1.o \
 			src/net/udpmidi.o \
 			src/net/webdaemon.o \
+			src/net/websocketdaemon.o \
 			src/pisound.o \
 			src/power.o \
 			src/rommanager.o \
