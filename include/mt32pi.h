@@ -45,6 +45,8 @@
 #include <circle/usb/usbserial.h>
 #include <fatfs/ff.h>
 #include <wlan/bcm4343.h>
+
+#include "midisequencer.h"
 #include <wlan/hostap/wpa_supplicant/wpasupplicant.h>
 
 #include "config.h"
@@ -57,6 +59,7 @@
 #include "net/ftpdaemon.h"
 #include "net/udpmidi.h"
 #include "net/webdaemon.h"
+#include "net/websocketdaemon.h"
 #include "pisound.h"
 #include "power.h"
 #include "ringbuffer.h"
@@ -90,7 +93,10 @@ public:
 	size_t GetSoundFontCount() const;
 	int GetMasterVolume() const { return static_cast<int>(m_nMasterVolume); }
 	int GetMT32ROMSetIndex() const;
-	bool GetSoundFontFXState(bool& bReverbActive, float& nReverbRoomSize, float& nReverbLevel, bool& bChorusActive, float& nChorusDepth) const;
+	bool GetSoundFontFXState(bool& bReverbActive, float& nReverbRoomSize, float& nReverbLevel,
+	                         float& nReverbDamping, float& nReverbWidth,
+	                         bool& bChorusActive, float& nChorusDepth, float& nChorusLevel,
+	                         int& nChorusVoices, float& nChorusSpeed, float& nGain) const;
 	void GetMIDIChannelLevels(float* pOutLevels, float* pOutPeaks) const;
 	bool SetActiveSynth(TSynth Synth);
 	bool SetMT32ROMSet(TMT32ROMSet ROMSet);
@@ -99,8 +105,14 @@ public:
 	bool SetSoundFontReverbActive(bool bActive);
 	bool SetSoundFontReverbRoomSize(float nRoomSize);
 	bool SetSoundFontReverbLevel(float nLevel);
+	bool SetSoundFontReverbDamping(float nDamping);
+	bool SetSoundFontReverbWidth(float nWidth);
 	bool SetSoundFontChorusActive(bool bActive);
 	bool SetSoundFontChorusDepth(float nDepth);
+	bool SetSoundFontChorusLevel(float nLevel);
+	bool SetSoundFontChorusVoices(int nVoices);
+	bool SetSoundFontChorusSpeed(float nSpeed);
+	bool SetSoundFontGain(float nGain);
 
 	// MT-32 Sound Parameters
 	float GetMT32ReverbOutputGain() const;
@@ -127,6 +139,29 @@ public:
 	void RequestReboot() { m_bRunning = false; }
 	bool HasMT32Synth() const { return m_pMT32Synth != nullptr; }
 	bool HasSoundFontSynth() const { return m_pSoundFontSynth != nullptr; }
+
+	// ---- Sequencer control (called from Core 0 / web handler) ----
+	struct TSequencerStatus
+	{
+		bool        bPlaying;
+		bool        bLoopEnabled;
+		bool        bFinished;   // true when song ended naturally (loop=off)
+		const char* pFile;       // points to internal buffer; valid until next call
+		u32         nEventCount;
+		u32         nDurationMs;
+		u32         nElapsedMs;
+	};
+
+	void             SequencerPlayFile(const char* pPath);
+	void             SequencerStop();
+	void             SetSequencerLoop(bool bLoop);
+	TSequencerStatus GetSequencerStatus() const;
+	void             GetMIDIFileListJSON(CString& outJSON) const;
+	void             SendRawMIDI(const u8* pData, size_t nSize);
+
+	// Active note snapshot — indexed [channel][note], value = EMidiSource (0=off)
+	enum class EMidiSource : u8 { None = 0, Physical = 1, Player = 2, WebUI = 3 };
+	void GetActiveNotes(u8 out[16][128]) const;
 
 private:
 	enum class TLCDLogType
@@ -169,6 +204,7 @@ private:
 	void MainTask();
 	void UITask();
 	void AudioTask();
+	void Core3SequencerTask();
 
 	void UpdateUSB(bool bStartup = false);
 	void UpdateNetwork();
@@ -216,6 +252,7 @@ private:
 	CUDPMIDIReceiver* m_pUDPMIDIReceiver;
 	CFTPDaemon* m_pFTPDaemon;
 	CWebDaemon* m_pWebDaemon;
+	CWebSocketDaemon* m_pWebSocketDaemon;
 
 	CBcmRandomNumberGenerator m_Random;
 
@@ -269,8 +306,30 @@ private:
 	// Menu long-press tracking
 	bool m_bMenuLongPressConsumed;
 
-	// MIDI receive buffer
+	// MIDI receive buffers
 	CRingBuffer<u8, MIDIRxBufferSize> m_MIDIRxBuffer;
+	CRingBuffer<u8, MIDIRxBufferSize> m_Core3MIDIRxBuffer;
+	CRingBuffer<u8, MIDIRxBufferSize> m_WebMIDIRxBuffer;  // Web keyboard → Core 0
+
+	// ---- Sequencer Core0↔Core3 communication ----
+	// Core 0 loads files and writes command flags.
+	// Core 3 only calls Start()/PopDueBytes() — no FatFS I/O on Core 3.
+	static constexpr size_t SeqPathMax = 260;
+
+	CMIDISequencer*  m_pSequencer;          // heap, allocated by Core 0 on first play
+	volatile bool    m_bSeqReadyToPlay;     // Core 0 → Core 3: file loaded, start playing
+	volatile bool    m_bSeqStopFlag;        // Core 0 → Core 3: stop playback
+	volatile bool    m_bSeqLoopEnabled;     // Core 0 writes; Core 3 reads: repeat when done
+	volatile bool    m_bSeqIsPlaying;       // Core 3 → Core 0: playback active
+	volatile bool    m_bSeqFinished;        // Core 3 → Core 0: song ended naturally
+	volatile u32     m_nSeqElapsedUs;       // Core 3 → Core 0: elapsed µs
+	volatile u32     m_nSeqDurationUs;      // Core 0 writes after LoadFromFile
+	volatile u32     m_nSeqEventCount;      // Core 0 writes after LoadFromFile
+	char             m_szSeqCurrentFile[SeqPathMax]; // Core 0 writes after LoadFromFile
+
+	// Active note snapshot (written by OnShortMessage on Core 0 task context)
+	u8 m_activeNotes[16][128];   // value = EMidiSource (0 = off)
+	u8 m_eMidiSource;            // source tag for the current ParseMIDIBytes batch
 
 	// Event handling
 	TEventQueue m_EventQueue;
