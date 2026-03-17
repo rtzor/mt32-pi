@@ -46,7 +46,7 @@
 #include <fatfs/ff.h>
 #include <wlan/bcm4343.h>
 
-#include "midisequencer.h"
+#include "fluidsequencer.h"
 #include <wlan/hostap/wpa_supplicant/wpasupplicant.h>
 
 #include "config.h"
@@ -115,6 +115,13 @@ public:
 	bool SetSoundFontChorusVoices(int nVoices);
 	bool SetSoundFontChorusSpeed(float nSpeed);
 	bool SetSoundFontGain(float nGain);
+	bool SetSoundFontTuning(int nPreset);
+	int GetSoundFontTuning() const;
+	const char* GetSoundFontTuningName() const;
+	bool SetSoundFontPolyphony(int nPolyphony);
+	int GetSoundFontPolyphony() const;
+	bool SetSoundFontChannelType(int nChannel, int nType);
+	u16 GetSoundFontPercussionMask() const;
 
 	// MT-32 Sound Parameters
 	float GetMT32ReverbOutputGain() const;
@@ -191,6 +198,13 @@ public:
 		u32         nEventCount;
 		u32         nDurationMs;
 		u32         nElapsedMs;
+		int         nCurrentTick;
+		int         nTotalTicks;
+		int         nBPM;
+		double      nTempoMultiplier;
+		int         nDivision;
+		u32         nFileSizeKB; // file size in KB (0 if unknown)
+		const char* pDiag;       // diagnostic string from FluidSequencer
 	};
 
 	void             SequencerPlayFile(const char* pPath);
@@ -199,6 +213,11 @@ public:
 	TSequencerStatus GetSequencerStatus() const;
 	void             GetMIDIFileListJSON(CString& outJSON) const;
 	void             SendRawMIDI(const u8* pData, size_t nSize);
+
+	// Advanced sequencer controls (FluidSequencer mode only)
+	bool             SequencerSeek(int nTicks);
+	bool             SequencerSetTempoMultiplier(double nMultiplier);
+	bool             SequencerSetTempoBPM(double nBPM);
 
 	// Active note snapshot — indexed [channel][note], value = EMidiSource (0=off)
 	enum class EMidiSource : u8 { None = 0, Physical = 1, Player = 2, WebUI = 3 };
@@ -245,7 +264,7 @@ private:
 	void MainTask();
 	void UITask();
 	void AudioTask();
-	void Core3SequencerTask();
+
 
 	void UpdateUSB(bool bStartup = false);
 	void UpdateNetwork();
@@ -363,23 +382,20 @@ private:
 
 	// MIDI receive buffers
 	CRingBuffer<u8, MIDIRxBufferSize> m_MIDIRxBuffer;
-	CRingBuffer<u8, MIDIRxBufferSize> m_Core3MIDIRxBuffer;
 	CRingBuffer<u8, MIDIRxBufferSize> m_WebMIDIRxBuffer;  // Web keyboard → Core 0
 
-	// ---- Sequencer Core0↔Core3 communication ----
-	// Core 0 loads files and writes command flags.
-	// Core 3 only calls Start()/PopDueBytes() — no FatFS I/O on Core 3.
+	// ---- Sequencer (FluidSequencer on Core 0) ----
 	static constexpr size_t SeqPathMax = 260;
 
-	CMIDISequencer*  m_pSequencer;          // heap, allocated by Core 0 on first play
-	volatile bool    m_bSeqReadyToPlay;     // Core 0 → Core 3: file loaded, start playing
-	volatile bool    m_bSeqStopFlag;        // Core 0 → Core 3: stop playback
+	CFluidSequencer* m_pFluidSequencer;     // heap, allocated on first play
+	double           m_nTempoMultiplier;    // current tempo multiplier (for status reporting)
 	volatile bool    m_bSeqLoopEnabled;     // Core 0 writes; Core 3 reads: repeat when done
 	volatile bool    m_bSeqIsPlaying;       // Core 3 → Core 0: playback active
 	volatile bool    m_bSeqFinished;        // Core 3 → Core 0: song ended naturally
 	volatile u32     m_nSeqElapsedUs;       // Core 3 → Core 0: elapsed µs
 	volatile u32     m_nSeqDurationUs;      // Core 0 writes after LoadFromFile
 	volatile u32     m_nSeqEventCount;      // Core 0 writes after LoadFromFile
+	volatile u32     m_nSeqFileSizeKB;      // Core 0 writes after LoadFromFile
 	char             m_szSeqCurrentFile[SeqPathMax]; // Core 0 writes after LoadFromFile
 
 	// Active note snapshot (written by OnShortMessage on Core 0 task context)

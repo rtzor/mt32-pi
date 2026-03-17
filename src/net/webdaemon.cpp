@@ -712,6 +712,8 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	const bool bIsSeqStopPath      = strcmp(pPath, "/api/sequencer/stop") == 0;
 	const bool bIsSeqFilesPath      = strcmp(pPath, "/api/sequencer/files") == 0;
 	const bool bIsSeqLoopPath       = strcmp(pPath, "/api/sequencer/loop")  == 0;
+	const bool bIsSeqSeekPath       = strcmp(pPath, "/api/sequencer/seek")  == 0;
+	const bool bIsSeqTempoPath      = strcmp(pPath, "/api/sequencer/tempo") == 0;
 	const bool bIsMidiNotePath      = strcmp(pPath, "/api/midi/note")        == 0;
 	const bool bIsMidiRawPath       = strcmp(pPath, "/api/midi/raw")         == 0;
 	const bool bIsSequencerPagePath = strcmp(pPath, "/sequencer") == 0;
@@ -724,7 +726,7 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	const bool bIsMixerPresetPath   = strcmp(pPath, "/api/mixer/preset") == 0;
 	const bool bIsMixerPagePath     = strcmp(pPath, "/mixer") == 0;
 
-	if (!bIsIndexPath && !bIsConfigPagePath && !bIsSoundPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsRuntimeStatusPath && !bIsRuntimeSetPath && !bIsSystemRebootPath && !bIsSeqStatusPath && !bIsSeqPlayPath && !bIsSeqStopPath && !bIsSeqFilesPath && !bIsSeqLoopPath && !bIsMidiNotePath && !bIsMidiRawPath && !bIsSequencerPagePath && !bIsAppCSSPath && !bIsAppJSPath && !bIsWifiReadPath && !bIsWifiSavePath && !bIsMixerStatusPath && !bIsMixerSetPath && !bIsMixerPresetPath && !bIsMixerPagePath)
+	if (!bIsIndexPath && !bIsConfigPagePath && !bIsSoundPagePath && !bIsStatusAPIPath && !bIsMIDIAPIPath && !bIsConfigSavePath && !bIsRuntimeStatusPath && !bIsRuntimeSetPath && !bIsSystemRebootPath && !bIsSeqStatusPath && !bIsSeqPlayPath && !bIsSeqStopPath && !bIsSeqFilesPath && !bIsSeqLoopPath && !bIsSeqSeekPath && !bIsSeqTempoPath && !bIsMidiNotePath && !bIsMidiRawPath && !bIsSequencerPagePath && !bIsAppCSSPath && !bIsAppJSPath && !bIsWifiReadPath && !bIsWifiSavePath && !bIsMixerStatusPath && !bIsMixerSetPath && !bIsMixerPresetPath && !bIsMixerPagePath)
 		return HTTPNotFound;
 
 	if (!m_pMT32Pi)
@@ -742,7 +744,18 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		AppendJSONPair(JSON, "file", s.pFile ? s.pFile : "");
 		AppendJSONPairInt(JSON, "event_count", static_cast<int>(s.nEventCount));
 		AppendJSONPairInt(JSON, "duration_ms", static_cast<int>(s.nDurationMs));
-		AppendJSONPairInt(JSON, "elapsed_ms", static_cast<int>(s.nElapsedMs), false);
+		AppendJSONPairInt(JSON, "elapsed_ms", static_cast<int>(s.nElapsedMs));
+		AppendJSONPairInt(JSON, "current_tick", s.nCurrentTick);
+		AppendJSONPairInt(JSON, "total_ticks", s.nTotalTicks);
+		AppendJSONPairInt(JSON, "bpm", s.nBPM);
+		AppendJSONPairInt(JSON, "division", s.nDivision);
+		AppendJSONPairFloat(JSON, "tempo_multiplier", static_cast<float>(s.nTempoMultiplier));
+		AppendJSONPairInt(JSON, "file_size_kb", static_cast<int>(s.nFileSizeKB), false);
+		if (s.pDiag && s.pDiag[0])
+		{
+			JSON += ",";
+			AppendJSONPair(JSON, "diag", s.pDiag, false);
+		}
 		JSON += "}";
 		const unsigned nLen = JSON.GetLength();
 		if (*pLength < nLen) return HTTPInternalServerError;
@@ -821,6 +834,55 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		*pLength = nLen;
 		*ppContentType = "application/json; charset=utf-8";
 		return HTTPOK;
+	}
+
+	// ---- POST /api/sequencer/seek  (body: ticks=12345) ----
+	if (bIsSeqSeekPath)
+	{
+		char TicksVal[16] = {};
+		int nTicks = 0;
+		if (pFormData && *pFormData && GetFormValue(pFormData, "ticks", TicksVal, sizeof(TicksVal)))
+			nTicks = atoi(TicksVal);
+		const bool bOk = m_pMT32Pi->SequencerSeek(nTicks);
+		CString JSON;
+		JSON.Format("{\"ok\":%s}", bOk ? "true" : "false");
+		const unsigned nLen = JSON.GetLength();
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(JSON), nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return bOk ? HTTPOK : HTTPBadRequest;
+	}
+
+	// ---- POST /api/sequencer/tempo  (body: multiplier=1.5 OR bpm=140) ----
+	if (bIsSeqTempoPath)
+	{
+		char MultVal[16] = {};
+		char BPMVal[16] = {};
+		bool bOk = false;
+		if (pFormData && *pFormData)
+		{
+			if (GetFormValue(pFormData, "multiplier", MultVal, sizeof(MultVal)))
+			{
+				const double nMult = strtod(MultVal, nullptr);
+				if (nMult > 0.0)
+					bOk = m_pMT32Pi->SequencerSetTempoMultiplier(nMult);
+			}
+			else if (GetFormValue(pFormData, "bpm", BPMVal, sizeof(BPMVal)))
+			{
+				const double nBPM = strtod(BPMVal, nullptr);
+				if (nBPM > 0.0)
+					bOk = m_pMT32Pi->SequencerSetTempoBPM(nBPM);
+			}
+		}
+		CString JSON;
+		JSON.Format("{\"ok\":%s}", bOk ? "true" : "false");
+		const unsigned nLen = JSON.GetLength();
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(JSON), nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return bOk ? HTTPOK : HTTPBadRequest;
 	}
 
 	// ---- POST /api/midi/raw  (body: bytes=144,60,100,128,60,0,...) ----
@@ -1653,6 +1715,35 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 			if (ParseFloatStrict(Value, nGain))
 				bApplied = m_pMT32Pi->SetSoundFontGain(nGain);
 		}
+		else if (std::strcmp(Param, "sf_tuning") == 0)
+		{
+			int nPreset = 0;
+			if (ParseIntStrict(Value, nPreset))
+				bApplied = m_pMT32Pi->SetSoundFontTuning(nPreset);
+		}
+		else if (std::strcmp(Param, "sf_polyphony") == 0)
+		{
+			int nPoly = 0;
+			if (ParseIntStrict(Value, nPoly))
+				bApplied = m_pMT32Pi->SetSoundFontPolyphony(nPoly);
+		}
+		else if (std::strcmp(Param, "sf_channel_type") == 0)
+		{
+			int nChan = 0, nType = 0;
+			const char* pComma = std::strchr(Value, ',');
+			if (pComma)
+			{
+				char ChanBuf[8];
+				size_t nLen = pComma - Value;
+				if (nLen < sizeof(ChanBuf))
+				{
+					std::memcpy(ChanBuf, Value, nLen);
+					ChanBuf[nLen] = '\0';
+					if (ParseIntStrict(ChanBuf, nChan) && ParseIntStrict(pComma + 1, nType))
+						bApplied = m_pMT32Pi->SetSoundFontChannelType(nChan, nType);
+				}
+			}
+		}
 		// MT-32 Parameters
 		else if (std::strcmp(Param, "mt32_reverb_gain") == 0)
 		{
@@ -1753,6 +1844,10 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		AppendJSONPairFloat(JSON, "sf_chorus_level", bHasSoundFontFX ? nChorusLevel : 0.0f);
 		AppendJSONPairInt(JSON, "sf_chorus_voices", bHasSoundFontFX ? nChorusVoices : 1);
 		AppendJSONPairFloat(JSON, "sf_chorus_speed", bHasSoundFontFX ? nChorusSpeed : 0.0f);
+		AppendJSONPairInt(JSON, "sf_tuning", m_pMT32Pi->GetSoundFontTuning());
+		AppendJSONPair(JSON, "sf_tuning_name", m_pMT32Pi->GetSoundFontTuningName());
+		AppendJSONPairInt(JSON, "sf_polyphony", m_pMT32Pi->GetSoundFontPolyphony());
+		AppendJSONPairInt(JSON, "sf_percussion_mask", m_pMT32Pi->GetSoundFontPercussionMask());
 		
 		// MT-32 parameters
 		AppendJSONPairFloat(JSON, "mt32_reverb_gain", m_pMT32Pi->GetMT32ReverbOutputGain());
@@ -1822,6 +1917,10 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		AppendJSONPairFloat(JSON, "sf_chorus_level", bHasSoundFontFX ? nChorusLevel : 0.0f);
 		AppendJSONPairInt(JSON, "sf_chorus_voices", bHasSoundFontFX ? nChorusVoices : 1);
 		AppendJSONPairFloat(JSON, "sf_chorus_speed", bHasSoundFontFX ? nChorusSpeed : 0.0f);
+		AppendJSONPairInt(JSON, "sf_tuning", m_pMT32Pi->GetSoundFontTuning());
+		AppendJSONPair(JSON, "sf_tuning_name", m_pMT32Pi->GetSoundFontTuningName());
+		AppendJSONPairInt(JSON, "sf_polyphony", m_pMT32Pi->GetSoundFontPolyphony());
+		AppendJSONPairInt(JSON, "sf_percussion_mask", m_pMT32Pi->GetSoundFontPercussionMask());
 		
 		// MT-32 parameters
 		AppendJSONPairFloat(JSON, "mt32_reverb_gain", m_pMT32Pi->GetMT32ReverbOutputGain());
@@ -1969,40 +2068,104 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 	{
 		CString HTML;
 		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
-		HTML += "<title>mt32-pi sequencer</title><link rel='stylesheet' href='/app.css'></head><body><main>";
+		HTML += "<title>mt32-pi sequencer</title><link rel='stylesheet' href='/app.css'>";
+		HTML += "<style>";
+		HTML += "#np{background:linear-gradient(135deg,#0d1b35,#111827);border:1px solid #1d4ed8;border-radius:14px;padding:18px 20px;margin-bottom:14px;}";
+		HTML += ".np-f{font-size:16px;font-weight:700;color:#f8fafc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:8px 0 14px;}";
+		HTML += ".stp{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}";
+		HTML += ".stp span{background:#0a1020;border:1px solid #1e3a5f;border-radius:999px;padding:4px 13px;font-size:12px;color:#64748b;}";
+		HTML += ".stp strong{color:#93c5fd;}";
+		HTML += "#pb{cursor:pointer;height:14px;margin:12px 0 4px;}";
+		HTML += ".tmr{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;}";
+		HTML += ".tmr .lbl{color:#94a3b8;font-size:13px;}";
+		HTML += ".tmv{font-size:15px;font-weight:700;color:#93c5fd;min-width:54px;text-align:center;}";
+		HTML += "</style></head><body><main>";
 		HTML += "<script src='/app.js'></script>";
-		HTML += "<h1>MIDI Sequencer</h1><p>Plays MIDI files from SD card or USB.</p>";
+		HTML += "<h1>MIDI Sequencer</h1>";
 		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
-		HTML += "<section><h2>File</h2><div class='grid'>";
-		HTML += "<label>MIDI file<select id='seq-file'><option value=''>Loading...</option></select></label></div>";
-		HTML += "<div style='margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;'>";
+		// Now Playing card
+		HTML += "<div id='np'>";
+		HTML += "<div style='display:flex;align-items:center;gap:10px;'>";
+		HTML += "<span id='seq-badge' class='badge'>Stopped</span>";
+		HTML += "<span style='color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.06em;'>Now Playing</span>";
+		HTML += "</div>";
+		HTML += "<div class='np-f' id='seq-cur-file'>&#8212;</div>";
+		HTML += "<div id='pb' class='prog-bg' onclick='seekClick(event,this)'>";
+		HTML += "<div id='prog' class='prog-fill' style='height:100%;pointer-events:none;'></div></div>";
+		HTML += "<div style='display:flex;justify-content:space-between;font-size:12px;color:#475569;margin-top:2px;'>";
+		HTML += "<span id='seq-elapsed'>0:00</span><span id='seq-duration'>0:00</span></div>";
+		HTML += "<div class='stp'>";
+		HTML += "<span>&#9835;&nbsp;<strong id='seq-bpm'>&#8212;</strong>&nbsp;BPM</span>";
+		HTML += "<span><strong id='seq-ppqn'>&#8212;</strong>&nbsp;PPQN</span>";
+		HTML += "<span>Tempo&nbsp;<strong id='seq-tempo'>1.00&#215;</strong></span>";
+		HTML += "<span>Tick&nbsp;<strong id='seq-tick'>&#8212;</strong></span>";
+		HTML += "<span><strong id='seq-size'>&#8212;</strong>&nbsp;KB</span>";
+		HTML += "</div></div>";
+		// Transport section
+		HTML += "<section><h2>Transport</h2>";
+		HTML += "<div style='display:flex;gap:8px;flex-wrap:wrap;'>";
 		HTML += "<button class='primary' onclick='doPlay()'>&#9654; Play</button>";
 		HTML += "<button class='danger' onclick='doStop()'>&#9646;&#9646; Stop</button>";
 		HTML += "<button id='seq-loop-btn' onclick='toggleLoop()' title='Loop: OFF'>&#8635; Loop</button>";
-		HTML += "<button onclick='loadFiles()'>&#8635; Refresh list</button></div></section>";
-		HTML += "<section><h2>Status</h2>";
-		HTML += "<span id='seq-badge' class='badge'>Stopped</span>";
-		HTML += "<p id='seq-cur-file' style='margin-top:8px;color:#64748b;word-break:break-all;'>&#8212;</p>";
-		HTML += "<div class='prog-bg'><div id='prog' class='prog-fill'></div></div>";
-		HTML += "<p id='seq-time' style='font-size:13px;'>0:00 / 0:00</p>";
-		HTML += "<p id='msg'></p></section>";
+		HTML += "</div>";
+		HTML += "<div class='tmr'>";
+		HTML += "<span class='lbl'>Tempo</span>";
+		HTML += "<button onclick='adjTempo(-0.1)' style='width:30px;padding:5px 0;text-align:center;'>&#8722;</button>";
+		HTML += "<span class='tmv' id='seq-tmv'>1.00&#215;</span>";
+		HTML += "<button onclick='adjTempo(0.1)' style='width:30px;padding:5px 0;text-align:center;'>+</button>";
+		HTML += "<button onclick='adjTempo(0)' style='padding:5px 10px;font-size:12px;'>1&#215; Reset</button>";
+		HTML += "</div></section>";
+		// File section
+		HTML += "<section><h2>File</h2><div class='grid'>";
+		HTML += "<label>MIDI file<select id='seq-file'><option value=''>Loading...</option></select></label></div>";
+		HTML += "<div style='margin-top:10px;'><button onclick='loadFiles()' style='font-size:12px;'>&#8635; Refresh list</button></div></section>";
+		HTML += "<p id='msg'></p>";
 
 		HTML += "<script>";
-		// --- Status helpers ---
-		HTML += "function applyStatus(d){if(!d)return;var b=document.getElementById('seq-badge');";
-		HTML += "var st=d.playing?'playing':(d.finished?'finished':'stopped');";
-		HTML += "b.textContent=st==='playing'?'Playing':(st==='finished'?'Finished':'Stopped');"; 
-		HTML += "b.className='badge'+(st==='playing'?' playing':(st==='finished'?' finished':''));";
-		HTML += "document.getElementById('seq-cur-file').textContent=d.file||'\\u2014';";
-		HTML += "var dur=d.duration_ms||1;var elp=st==='finished'?d.duration_ms:(d.elapsed_ms||0);";
+		// State variables
+		HTML += "var _wsOk=false,_ls={},_ct=1.0;";
+		HTML += "var _lElp=0,_lDur=1,_lTime=0,_interp=null;";
+		// Progress bar update helpers
+		HTML += "function _updBar(elp,dur){";
 		HTML += "document.getElementById('prog').style.width=Math.min(100,elp/dur*100).toFixed(1)+'%';";
-		HTML += "document.getElementById('seq-time').textContent=fmt(elp)+' / '+fmt(d.duration_ms);";
+		HTML += "document.getElementById('seq-elapsed').textContent=fmt(elp);}";
+		HTML += "function _startInterp(){";
+		HTML += "_interp=setInterval(function(){";
+		HTML += "var est=Math.min(_lDur,_lElp+(Date.now()-_lTime)*_ct);";
+		HTML += "_updBar(est,_lDur);";
+		HTML += "},150);}";
+		// applyStatus
+		HTML += "function applyStatus(d){if(!d)return;_ls=d;";
+		HTML += "var b=document.getElementById('seq-badge');";
+		HTML += "var st=d.playing?'playing':(d.finished?'finished':'stopped');";
+		HTML += "b.textContent=st==='playing'?'Playing':(st==='finished'?'Finished':'Stopped');";
+		HTML += "b.className='badge'+(st==='playing'?' playing':(st==='finished'?' finished':''));";
+		HTML += "var fn=(d.file||'').replace(/^(SD:|USB:)/,'');";
+		HTML += "document.getElementById('seq-cur-file').textContent=fn||'\\u2014';";
+		// Sync bar from server data
+		HTML += "var dur=d.duration_ms>0?d.duration_ms:1;";
+		HTML += "var elp=st==='finished'?dur:(d.elapsed_ms||0);";
+		HTML += "document.getElementById('seq-duration').textContent=fmt(d.duration_ms||0);";
+		// Update interpolation state
+		HTML += "if(d.tempo_multiplier!==undefined)_ct=d.tempo_multiplier;";
+		HTML += "_lElp=elp;_lDur=dur;_lTime=Date.now();";
+		// Start/stop client-side interpolation
+		HTML += "if(_interp){clearInterval(_interp);_interp=null;}";
+		HTML += "if(st==='playing'){_updBar(elp,dur);_startInterp();}else{_updBar(elp,dur);}";
+		// BPM / PPQN / tempo / tick / size
+		HTML += "var bpm=d.bpm||0;document.getElementById('seq-bpm').textContent=bpm>0?bpm:'\\u2014';";
+		HTML += "var ppqn=d.division||0;document.getElementById('seq-ppqn').textContent=ppqn>0?ppqn:'\\u2014';";
+		HTML += "var tm=(_ct||1).toFixed(2)+'\\u00d7';";
+		HTML += "document.getElementById('seq-tempo').textContent=tm;";
+		HTML += "document.getElementById('seq-tmv').textContent=tm;";
+		HTML += "var ct=d.current_tick||0,tt=d.total_ticks||0;";
+		HTML += "document.getElementById('seq-tick').textContent=tt>0?(ct+' / '+tt):'\\u2014';";
+		HTML += "var sz=d.file_size_kb||0;document.getElementById('seq-size').textContent=sz>0?sz:'\\u2014';";
 		HTML += "var lb=document.getElementById('seq-loop-btn');";
 		HTML += "if(lb){lb.className=d.loop_enabled?'loop-on':'';lb.title=d.loop_enabled?'Loop: ON':'Loop: OFF';}}";
-		// --- Self-scheduling poll fallback (via HTTP when WS not connected) ---
-		HTML += "var _wsOk=false;";
+		// Poll fallback
 		HTML += "function schedPoll(){if(_wsOk)return;setTimeout(function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);if(!_wsOk)schedPoll();});},1000);}";
-		// --- WebSocket for status updates ---
+		// WebSocket
 		HTML += "(function(){var ws=null,_rt=0;";
 		HTML += "function wsConnect(){ws=new WebSocket('ws://'+location.hostname+':8765/');";
 		HTML += "ws.onopen=function(){_wsOk=true;};";
@@ -2010,16 +2173,32 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += "ws.onclose=function(){_wsOk=false;schedPoll();_rt=Math.min((_rt||500)*2,8000);setTimeout(wsConnect,_rt);};";
 		HTML += "ws.onerror=function(){ws.close();};}";
 		HTML += "wsConnect();})();";
-		// --- File list ---
+		// Seek on progress bar click — note: server param is 'ticks' (plural)
+		HTML += "function seekClick(ev,el){var r=el.getBoundingClientRect();";
+		HTML += "var f=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));";
+		HTML += "var tt=(_ls&&_ls.total_ticks)||0;if(tt<=0)return;";
+		HTML += "var tk=Math.round(f*tt);";
+		// Optimistically update the bar immediately
+		HTML += "_lElp=Math.round(f*_lDur);_lTime=Date.now();";
+		HTML += "_qs('/api/sequencer/seek','ticks='+tk,function(){});}";
+		// Tempo adjust
+		HTML += "function adjTempo(delta){var t=delta===0?1.0:Math.round(Math.max(0.1,Math.min(4.0,_ct+delta))*10)/10;";
+		HTML += "_qs('/api/sequencer/tempo','multiplier='+t,function(){";
+		HTML += "_ct=t;var lbl=t.toFixed(2)+'\\u00d7';";
+		HTML += "document.getElementById('seq-tempo').textContent=lbl;";
+		HTML += "document.getElementById('seq-tmv').textContent=lbl;});}";
+		// File list
 		HTML += "function loadFiles(){var sel=document.getElementById('seq-file');sel.innerHTML='<option value=\"\">Loading...</option>';";
-		HTML += "_qs('/api/sequencer/files','',function(files){sel.innerHTML='';if(!files||!files.length){sel.innerHTML='<option value=\"\">No MIDI files</option>';return;}";
-		HTML += "for(var i=0;i<files.length;i++){var o=document.createElement('option');o.value=files[i];o.textContent=files[i].replace(/^(SD:|USB:)/,'');sel.appendChild(o);}});}";
-		// --- Controls ---
+		HTML += "_qs('/api/sequencer/files','',function(files){sel.innerHTML='';";
+		HTML += "if(!files||!files.length){sel.innerHTML='<option value=\"\">No MIDI files</option>';return;}";
+		HTML += "for(var i=0;i<files.length;i++){var o=document.createElement('option');o.value=files[i];";
+		HTML += "o.textContent=files[i].replace(/^(SD:|USB:)/,'');sel.appendChild(o);}});}";
+		// Controls
 		HTML += "function doPlay(){var f=document.getElementById('seq-file').value;";
 		HTML += "if(!f){document.getElementById('msg').textContent='Select a file first.';return;}";
-		HTML += "document.getElementById('msg').textContent='Starting...';";		HTML += "_qs('/api/sequencer/play','file='+encodeURIComponent(f),function(j){document.getElementById('msg').textContent=j&&j.ok?'OK.':'Error.';});}";
-		HTML += "function doStop(){document.getElementById('msg').textContent='Stopping...';"; 
-		HTML += "_qs('/api/sequencer/stop','',function(){document.getElementById('msg').textContent='Stopped.';});}";
+		HTML += "document.getElementById('msg').textContent='';";
+		HTML += "_qs('/api/sequencer/play','file='+encodeURIComponent(f),function(j){document.getElementById('msg').textContent=j&&j.ok?'':'Error.';});}";
+		HTML += "function doStop(){_qs('/api/sequencer/stop','',function(){document.getElementById('msg').textContent='';});}";
 		HTML += "function toggleLoop(){var lb=document.getElementById('seq-loop-btn');var lc=lb&&lb.className==='loop-on';";
 		HTML += "_qs('/api/sequencer/loop','enabled='+(lc?'off':'on'),function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);});});}";
 		HTML += "loadFiles();schedPoll();";
@@ -2417,18 +2596,29 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		HTML += "'><span id='rt_sf_chorus_speed_val'>";
 		AppendEscaped(HTML, ChorusSpeed);
 		HTML += "</span></label>";
+		HTML += "<label>Tuning <select id='rt_sf_tuning'>";
+		HTML += "<option value='0'>Equal</option>";
+		HTML += "<option value='1'>Werckmeister III</option>";
+		HTML += "<option value='2'>Kirnberger III</option>";
+		HTML += "<option value='3'>Meantone 1/4</option>";
+		HTML += "<option value='4'>Pythagorean</option>";
+		HTML += "<option value='5'>Just Intonation</option>";
+		HTML += "<option value='6'>Vallotti</option>";
+		HTML += "</select></label>";
+		HTML += "<label>Polyphony <input id='rt_sf_polyphony' type='number' min='1' max='512' value='200'></label>";
+		HTML += "<label>Channel types<div id='sf_chtypes' style='display:flex;gap:3px;flex-wrap:wrap;margin-top:4px;'></div></label>";
 		HTML += "</div><div id='rtStatus' style='margin-top:10px;color:#86efac;'></div></section>";
 		HTML += "<script>const rs=document.getElementById('rtStatus');"
 			"const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};"
 			"const setDisabled=(id,b)=>{const e=document.getElementById(id);if(e)e.disabled=!!b;};"
 			"const setSectionHidden=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('section-hidden',!!b);};"
 			"const setTabActive=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',!!b);};";
-		HTML += "const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_gain_val',Number(j.sf_gain).toFixed(2));setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_reverb_damping_val',Number(j.sf_reverb_damping).toFixed(1));setText('rt_sf_reverb_width_val',Math.round(Number(j.sf_reverb_width)));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_sf_chorus_level_val',Number(j.sf_chorus_level).toFixed(2));setText('rt_sf_chorus_speed_val',Number(j.sf_chorus_speed).toFixed(2));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':'soundfont';const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const sfg=document.getElementById('rt_sf_gain');if(sfg)sfg.value=Number(j.sf_gain).toFixed(2);const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const rtd=document.getElementById('rt_sf_reverb_damping');if(rtd)rtd.value=Number(j.sf_reverb_damping).toFixed(1);const rtw=document.getElementById('rt_sf_reverb_width');if(rtw)rtw.value=Math.round(Number(j.sf_reverb_width));const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const ctl=document.getElementById('rt_sf_chorus_level');if(ctl)ctl.value=Number(j.sf_chorus_level).toFixed(2);const ctv=document.getElementById('rt_sf_chorus_voices');if(ctv)ctv.value=j.sf_chorus_voices;const cts=document.getElementById('rt_sf_chorus_speed');if(cts)cts.value=Number(j.sf_chorus_speed).toFixed(2);const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_gain',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_reverb_damping',!sf);setDisabled('rt_sf_reverb_width',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setDisabled('rt_sf_chorus_level',!sf);setDisabled('rt_sf_chorus_voices',!sf);setDisabled('rt_sf_chorus_speed',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);var dual=!!j.mixer_dual_mode;if(dual){document.querySelectorAll('#mt32-section input,#mt32-section select,#sf-section input,#sf-section select').forEach(function(e){e.disabled=false;});setSectionHidden('mt32-section',false);setSectionHidden('sf-section',false);setTabActive('tab-mt32',true);setTabActive('tab-sf',true);}var mxl=document.getElementById('rt_mixer_label');if(mxl){var pn=['All MT-32','All FluidSynth','Split GM','Custom'];if(j.mixer_enabled){mxl.textContent=pn[j.mixer_preset]||'On';mxl.style.color='#86efac';}else{mxl.textContent='OFF';mxl.style.color='#64748b';}}var mxb=document.getElementById('mx-banner');if(mxb)mxb.style.display=dual?'block':'none';};";
+		HTML += "const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_gain_val',Number(j.sf_gain).toFixed(2));setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_reverb_damping_val',Number(j.sf_reverb_damping).toFixed(1));setText('rt_sf_reverb_width_val',Math.round(Number(j.sf_reverb_width)));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_sf_chorus_level_val',Number(j.sf_chorus_level).toFixed(2));setText('rt_sf_chorus_speed_val',Number(j.sf_chorus_speed).toFixed(2));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':'soundfont';const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const sfg=document.getElementById('rt_sf_gain');if(sfg)sfg.value=Number(j.sf_gain).toFixed(2);const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const rtd=document.getElementById('rt_sf_reverb_damping');if(rtd)rtd.value=Number(j.sf_reverb_damping).toFixed(1);const rtw=document.getElementById('rt_sf_reverb_width');if(rtw)rtw.value=Math.round(Number(j.sf_reverb_width));const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const ctl=document.getElementById('rt_sf_chorus_level');if(ctl)ctl.value=Number(j.sf_chorus_level).toFixed(2);const ctv=document.getElementById('rt_sf_chorus_voices');if(ctv)ctv.value=j.sf_chorus_voices;const cts=document.getElementById('rt_sf_chorus_speed');if(cts)cts.value=Number(j.sf_chorus_speed).toFixed(2);const sft=document.getElementById('rt_sf_tuning');if(sft)sft.value=j.sf_tuning;const sfp=document.getElementById('rt_sf_polyphony');if(sfp)sfp.value=j.sf_polyphony;if(j.sf_percussion_mask!==undefined){var cg=document.getElementById('sf_chtypes');if(cg){if(!cg.children.length){for(var ci=0;ci<16;ci++){var btn=document.createElement('button');btn.type='button';btn.id='sf_ch'+ci;btn.style.cssText='min-width:30px;padding:2px 4px;font-size:11px;border:1px solid #334155;border-radius:4px;cursor:pointer;';btn.dataset.ch=ci;btn.addEventListener('click',function(){var c=Number(this.dataset.ch);var cur=Number(this.dataset.drum);rtApply('sf_channel_type',c+','+(cur?0:1));});cg.appendChild(btn);}}for(var ci=0;ci<16;ci++){var b=document.getElementById('sf_ch'+ci);if(b){var isDrum=(j.sf_percussion_mask>>ci)&1;b.dataset.drum=isDrum;b.textContent=(ci+1)+(isDrum?'D':'M');b.style.background=isDrum?'#f59e0b':'#334155';b.style.color=isDrum?'#000':'#e2e8f0';b.disabled=!sf;}}}}const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_gain',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_reverb_damping',!sf);setDisabled('rt_sf_reverb_width',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setDisabled('rt_sf_chorus_level',!sf);setDisabled('rt_sf_chorus_voices',!sf);setDisabled('rt_sf_chorus_speed',!sf);setDisabled('rt_sf_tuning',!sf);setDisabled('rt_sf_polyphony',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);var dual=!!j.mixer_dual_mode;if(dual){document.querySelectorAll('#mt32-section input,#mt32-section select,#sf-section input,#sf-section select').forEach(function(e){e.disabled=false;});setSectionHidden('mt32-section',false);setSectionHidden('sf-section',false);setTabActive('tab-mt32',true);setTabActive('tab-sf',true);}var mxl=document.getElementById('rt_mixer_label');if(mxl){var pn=['All MT-32','All FluidSynth','Split GM','Custom'];if(j.mixer_enabled){mxl.textContent=pn[j.mixer_preset]||'On';mxl.style.color='#86efac';}else{mxl.textContent='OFF';mxl.style.color='#64748b';}}var mxb=document.getElementById('mx-banner');if(mxb)mxb.style.display=dual?'block':'none';};";
 		HTML += "const rtRefresh=async()=>{try{const r=await fetch('/api/runtime/status',{cache:'no-store'});if(!r.ok)throw new Error('http');const j=await r.json();applyRuntimeState(j);}catch(err){if(rs)rs.textContent='Error reading runtime status';}};";
 		HTML += "const rtApply=async(param,value)=>{if(!rs)return;rs.textContent='Applying...';const body=new URLSearchParams({param,value:String(value)});try{const r=await fetch('/api/runtime/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();if(!r.ok||!j.ok){rs.textContent='Could not apply '+param;return;}applyRuntimeState(j);rs.textContent='Applied: '+param;}catch(err){rs.textContent='Error applying '+param;}};";
 		HTML += "const bindChange=(id,param)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('change',()=>rtApply(param,el.value));};const bindRange=(id,param,formatter)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('input',()=>{if(formatter)formatter(el.value);});el.addEventListener('change',()=>rtApply(param,el.value));};";
 		HTML += "const tabMT32=document.getElementById('tab-mt32');if(tabMT32)tabMT32.addEventListener('click',()=>rtApply('active_synth','mt32'));const tabSF=document.getElementById('tab-sf');if(tabSF)tabSF.addEventListener('click',()=>rtApply('active_synth','soundfont'));";
-		HTML += "bindChange('rt_active_synth','active_synth');bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');bindChange('rt_sf_chorus_voices','sf_chorus_voices');bindChange('rt_mt32_reverb_active','mt32_reverb_active');bindChange('rt_mt32_nice_amp','mt32_nice_amp');bindChange('rt_mt32_nice_pan','mt32_nice_pan');bindChange('rt_mt32_nice_mix','mt32_nice_mix');bindChange('rt_mt32_dac_mode','mt32_dac_mode');bindChange('rt_mt32_midi_delay','mt32_midi_delay');bindChange('rt_mt32_analog_mode','mt32_analog_mode');bindChange('rt_mt32_renderer_type','mt32_renderer_type');bindChange('rt_mt32_partial_count','mt32_partial_count');";
+		HTML += "bindChange('rt_active_synth','active_synth');bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');bindChange('rt_sf_chorus_voices','sf_chorus_voices');bindChange('rt_sf_tuning','sf_tuning');bindChange('rt_sf_polyphony','sf_polyphony');bindChange('rt_mt32_reverb_active','mt32_reverb_active');bindChange('rt_mt32_nice_amp','mt32_nice_amp');bindChange('rt_mt32_nice_pan','mt32_nice_pan');bindChange('rt_mt32_nice_mix','mt32_nice_mix');bindChange('rt_mt32_dac_mode','mt32_dac_mode');bindChange('rt_mt32_midi_delay','mt32_midi_delay');bindChange('rt_mt32_analog_mode','mt32_analog_mode');bindChange('rt_mt32_renderer_type','mt32_renderer_type');bindChange('rt_mt32_partial_count','mt32_partial_count');";
 		HTML += "bindRange('rt_master_volume','master_volume',(v)=>setText('rt_master_volume_val',v));bindRange('rt_sf_gain','sf_gain',(v)=>setText('rt_sf_gain_val',Number(v).toFixed(2)));bindRange('rt_sf_reverb_room','sf_reverb_room',(v)=>setText('rt_sf_reverb_room_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_level','sf_reverb_level',(v)=>setText('rt_sf_reverb_level_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_damping','sf_reverb_damping',(v)=>setText('rt_sf_reverb_damping_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_width','sf_reverb_width',(v)=>setText('rt_sf_reverb_width_val',Math.round(Number(v))));bindRange('rt_sf_chorus_depth','sf_chorus_depth',(v)=>setText('rt_sf_chorus_depth_val',Math.round(Number(v))));bindRange('rt_sf_chorus_level','sf_chorus_level',(v)=>setText('rt_sf_chorus_level_val',Number(v).toFixed(2)));bindRange('rt_sf_chorus_speed','sf_chorus_speed',(v)=>setText('rt_sf_chorus_speed_val',Number(v).toFixed(2)));bindRange('rt_mt32_reverb_gain','mt32_reverb_gain',(v)=>setText('rt_mt32_reverb_gain_val',Number(v).toFixed(2)));rtRefresh();setInterval(rtRefresh,3000);</script>";
 		HTML += "</main></body></html>";
 

@@ -135,12 +135,16 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 	int n = snprintf(buf, bufSize,
 		"{\"playing\":%s,\"finished\":%s,\"loop_enabled\":%s,"
 		"\"file\":\"%s\",\"duration_ms\":%u,\"elapsed_ms\":%u,"
+		"\"bpm\":%d,\"current_tick\":%d,\"total_ticks\":%d,"
+		"\"division\":%d,\"tempo_multiplier\":%.3f,\"file_size_kb\":%u,"
 		"\"synth\":\"%s\",\"mixer\":%s,\"preset\":%d,\"channels\":[",
 		s.bPlaying     ? "true" : "false",
 		s.bFinished    ? "true" : "false",
 		s.bLoopEnabled ? "true" : "false",
 		s.pFile ? s.pFile : "",
 		s.nDurationMs, s.nElapsedMs,
+		s.nBPM, s.nCurrentTick, s.nTotalTicks,
+		s.nDivision, (float)s.nTempoMultiplier, s.nFileSizeKB,
 		pPi->GetActiveSynthName(),
 		ms.bEnabled ? "true" : "false",
 		ms.nPreset);
@@ -224,7 +228,7 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 static void HandleConnection(CSocket* pSock, CMT32Pi* pMT32Pi)
 {
 	static const size_t kRxBuf = 2048;
-	static const size_t kTxBuf = 1024;
+	static const size_t kTxBuf = 3072;
 
 	u8* rxBuf = new u8[kRxBuf];
 	u8* txBuf = new u8[kTxBuf];

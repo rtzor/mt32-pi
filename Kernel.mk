@@ -19,7 +19,7 @@ OBJS		:=	src/config.o \
 			src/lcd/ui.o \
 			src/lcd/ui_menu.o \
 			src/main.o \
-			src/midisequencer.o \
+			src/fluidsequencer.o \
 			src/midimonitor.o \
 			src/midiparser.o \
 			src/midirouter.o \

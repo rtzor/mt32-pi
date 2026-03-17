@@ -32,7 +32,6 @@
 #include "lcd/drivers/hd44780.h"
 #include "lcd/drivers/ssd1306.h"
 #include "lcd/ui.h"
-#include "midisequencer.h"
 #include "mt32pi.h"
 
 #define MT32_PI_NAME "mt32-pi"
@@ -46,8 +45,6 @@ constexpr u32 LCDUpdatePeriodMillis                = 16;
 constexpr u32 MisterUpdatePeriodMillis             = 50;
 constexpr u32 LEDTimeoutMillis                     = 50;
 constexpr u32 ActiveSenseTimeoutMillis             = 330;
-constexpr bool EnableCore3SequencerLoadOnly        = false;
-const char Core3SequencerMIDIPath[]                = "SD:test.mid";
 
 constexpr float Sample24BitMax = (1 << 24 - 1) - 1;
 
@@ -134,15 +131,15 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_bAutoReducePartials(true),
 	  m_bMenuLongPressConsumed(false),
 
-	  m_pSequencer(nullptr),
-	  m_bSeqReadyToPlay(false),
-	  m_bSeqStopFlag(false),
+	  m_pFluidSequencer(nullptr),
+	  m_nTempoMultiplier(1.0),
 	  m_bSeqLoopEnabled(false),
 	  m_bSeqIsPlaying(false),
 	  m_bSeqFinished(false),
 	  m_nSeqElapsedUs(0),
 	  m_nSeqDurationUs(0),
-	  m_nSeqEventCount(0)
+	  m_nSeqEventCount(0),
+	  m_nSeqFileSizeKB(0)
 {
 	s_pThis = this;
 	m_szSeqCurrentFile[0] = '\0';
@@ -152,7 +149,7 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 
 CMT32Pi::~CMT32Pi()
 {
-	delete m_pSequencer;
+	delete m_pFluidSequencer;
 }
 
 bool CMT32Pi::Initialize(bool bSerialMIDIAvailable)
@@ -664,6 +661,62 @@ bool CMT32Pi::SetSoundFontGain(float nGain)
 	return true;
 }
 
+bool CMT32Pi::SetSoundFontTuning(int nPreset)
+{
+	if (!m_pSoundFontSynth)
+		return false;
+
+	m_pSoundFontSynth->SetTuning(nPreset);
+	return true;
+}
+
+int CMT32Pi::GetSoundFontTuning() const
+{
+	if (!m_pSoundFontSynth)
+		return 0;
+
+	return m_pSoundFontSynth->GetTuning();
+}
+
+const char* CMT32Pi::GetSoundFontTuningName() const
+{
+	return CSoundFontSynth::GetTuningName(GetSoundFontTuning());
+}
+
+bool CMT32Pi::SetSoundFontPolyphony(int nPolyphony)
+{
+	if (!m_pSoundFontSynth)
+		return false;
+
+	m_pSoundFontSynth->SetPolyphony(nPolyphony);
+	return true;
+}
+
+int CMT32Pi::GetSoundFontPolyphony() const
+{
+	if (!m_pSoundFontSynth)
+		return 0;
+
+	return m_pSoundFontSynth->GetPolyphony();
+}
+
+bool CMT32Pi::SetSoundFontChannelType(int nChannel, int nType)
+{
+	if (!m_pSoundFontSynth)
+		return false;
+
+	m_pSoundFontSynth->SetChannelType(nChannel, nType);
+	return true;
+}
+
+u16 CMT32Pi::GetSoundFontPercussionMask() const
+{
+	if (!m_pSoundFontSynth)
+		return (1 << 9);
+
+	return m_pSoundFontSynth->GetPercussionMask();
+}
+
 // ========== MT-32 Sound Parameters ==========
 float CMT32Pi::GetMT32ReverbOutputGain() const
 {
@@ -1129,60 +1182,142 @@ void CMT32Pi::SequencerPlayFile(const char* pPath)
 	if (!pPath || !*pPath)
 		return;
 
-	// Allocate sequencer once on Core 0
-	if (!m_pSequencer)
+	// Requires FluidSynth available (for fluid_player MIDI parsing)
+	if (!m_pSoundFontSynth)
 	{
-		m_pSequencer = new CMIDISequencer();
-		if (!m_pSequencer)
-			return;
-	}
-
-	// Ask Core 3 to stop, then wait for it (brief spin — Core 3 is a tight loop)
-	m_bSeqStopFlag = true;
-	__sync_synchronize();
-	for (unsigned i = 0; i < 2000000u && m_bSeqIsPlaying; ++i)
-		asm volatile("yield");
-	__sync_synchronize();
-
-	// Load file on Core 0: FatFS / EMMC driver is safe here (CScheduler exists)
-	if (!m_pSequencer->LoadFromFile(pPath))
-	{
-		LOGWARN("SequencerPlayFile: failed to load %s", pPath);
+		LOGWARN("SequencerPlayFile: FluidSynth not available");
 		return;
 	}
 
-	// Write status fields (read by Core 0 for /api/sequencer/status)
+	// Allocate FluidSequencer once
+	if (!m_pFluidSequencer)
+	{
+		m_pFluidSequencer = new CFluidSequencer();
+		if (!m_pFluidSequencer)
+			return;
+		if (!m_pFluidSequencer->Initialize(m_pSoundFontSynth->GetFluidSynth()))
+		{
+			delete m_pFluidSequencer;
+			m_pFluidSequencer = nullptr;
+			LOGWARN("FluidSequencer init failed");
+			return;
+		}
+	}
+
+	// Play file via fluid_player
+	if (!m_pFluidSequencer->Play(pPath))
+	{
+		LOGWARN("FluidSequencer: failed to play %s", pPath);
+		return;
+	}
+
+	// Set loop mode: FluidSynth uses 1 = play once, -1 = infinite
+	m_pFluidSequencer->SetLoop(m_bSeqLoopEnabled ? -1 : 1);
+
+	// Update status fields
 	__builtin_strncpy(m_szSeqCurrentFile, pPath, SeqPathMax - 1);
 	m_szSeqCurrentFile[SeqPathMax - 1] = '\0';
-	m_nSeqEventCount = static_cast<u32>(m_pSequencer->GetEventCount());
-	m_nSeqDurationUs = m_pSequencer->GetDurationMillis() * 1000;
+	m_nSeqEventCount = 0;
+	m_nSeqDurationUs = 0;
 	m_nSeqElapsedUs  = 0;
 
-	__sync_synchronize();  // ensure above writes are visible before the flag
-	m_bSeqReadyToPlay = true;
+	// Get file size in KB
+	{
+		FILINFO fno;
+		m_nSeqFileSizeKB = (f_stat(pPath, &fno) == FR_OK) ? static_cast<u32>(fno.fsize / 1024) : 0;
+	}
+
+	m_bSeqIsPlaying  = true;
+	m_bSeqFinished   = false;
+	m_nTempoMultiplier = 1.0;
+
+	// Show LCD notice
+	const char* pBaseName = strrchr(pPath, '/');
+	pBaseName = pBaseName ? pBaseName + 1 : pPath;
+	LCDLog(TLCDLogType::Notice, "[SEQ] %s", pBaseName);
 }
 
 void CMT32Pi::SequencerStop()
 {
-	m_bSeqStopFlag = true;
+	if (m_pFluidSequencer)
+	{
+		m_pFluidSequencer->Stop();
+		m_bSeqIsPlaying = false;
+		m_bSeqFinished  = false;
+	}
 }
 
 CMT32Pi::TSequencerStatus CMT32Pi::GetSequencerStatus() const
 {
 	TSequencerStatus s;
-	s.bPlaying     = m_bSeqIsPlaying;
-	s.bLoopEnabled = m_bSeqLoopEnabled;
-	s.bFinished    = m_bSeqFinished;
-	s.pFile        = m_szSeqCurrentFile;
-	s.nEventCount  = m_nSeqEventCount;
-	s.nDurationMs  = m_nSeqDurationUs / 1000;
-	s.nElapsedMs   = m_nSeqElapsedUs  / 1000;
+	s.bLoopEnabled  = m_bSeqLoopEnabled;
+	s.pFile         = m_szSeqCurrentFile;
+	s.nFileSizeKB   = m_nSeqFileSizeKB;
+
+	if (m_pFluidSequencer)
+	{
+		s.bPlaying         = m_pFluidSequencer->IsPlaying();
+		s.bFinished        = m_pFluidSequencer->IsFinished();
+		s.nEventCount      = 0;
+		s.nCurrentTick     = m_pFluidSequencer->GetCurrentTick();
+		s.nTotalTicks      = m_pFluidSequencer->GetTotalTicks();
+		s.nBPM             = m_pFluidSequencer->GetBPM();
+		s.nDivision        = m_pFluidSequencer->GetDivision();
+		s.nTempoMultiplier = m_nTempoMultiplier;
+		s.pDiag            = m_pFluidSequencer->GetDiag();
+
+		// Estimate duration/elapsed from ticks and BPM
+		const int nBPM = s.nBPM > 0 ? s.nBPM : 120;
+		const int nDiv = s.nDivision > 0 ? s.nDivision : 480;
+		const double nMsPerTick = 60000.0 / (nBPM * nDiv);
+		s.nDurationMs = static_cast<u32>(s.nTotalTicks * nMsPerTick);
+		s.nElapsedMs  = static_cast<u32>(s.nCurrentTick * nMsPerTick);
+	}
+	else
+	{
+		s.bPlaying         = false;
+		s.bFinished        = false;
+		s.nEventCount      = 0;
+		s.nDurationMs      = 0;
+		s.nElapsedMs       = 0;
+		s.nCurrentTick     = 0;
+		s.nTotalTicks      = 0;
+		s.nBPM             = 0;
+		s.nDivision        = 0;
+		s.nTempoMultiplier = 1.0;
+		s.pDiag            = nullptr;
+	}
+
 	return s;
 }
 
 void CMT32Pi::SetSequencerLoop(bool bLoop)
 {
 	m_bSeqLoopEnabled = bLoop;
+	if (m_pFluidSequencer)
+		m_pFluidSequencer->SetLoop(bLoop ? -1 : 0);
+}
+
+bool CMT32Pi::SequencerSeek(int nTicks)
+{
+	if (!m_pFluidSequencer)
+		return false;
+	return m_pFluidSequencer->Seek(nTicks);
+}
+
+bool CMT32Pi::SequencerSetTempoMultiplier(double nMultiplier)
+{
+	if (!m_pFluidSequencer)
+		return false;
+	m_nTempoMultiplier = nMultiplier;
+	return m_pFluidSequencer->SetTempoMultiplier(nMultiplier);
+}
+
+bool CMT32Pi::SequencerSetTempoBPM(double nBPM)
+{
+	if (!m_pFluidSequencer)
+		return false;
+	return m_pFluidSequencer->SetTempoBPM(nBPM);
 }
 
 void CMT32Pi::SendRawMIDI(const u8* pData, size_t nSize)
@@ -1228,94 +1363,6 @@ void CMT32Pi::GetMIDIFileListJSON(CString& outJSON) const
 	outJSON += "]";
 }
 
-void CMT32Pi::Core3SequencerTask()
-{
-	LOGNOTE("Core 3 sequencer task starting up — waiting for play commands from Core 0");
-
-	// NOTE: No FatFS / file I/O here.
-	// With NO_BUSY_WAIT defined, the EMMC driver calls CScheduler::Get()->Yield().
-	// CScheduler only exists on Core 0; calling it from Core 3 crashes.
-	// All LoadFromFile() calls happen on Core 0 inside SequencerPlayFile().
-
-	u8 Buffer[64];
-	unsigned nSeqStartTick = CTimer::GetClockTicks();
-
-	while (m_bRunning)
-	{
-		// Handle stop command (Core 0 → Core 3)
-		if (m_bSeqStopFlag)
-		{
-			m_bSeqStopFlag = false;
-			if (m_pSequencer)
-				m_pSequencer->Stop();
-			m_bSeqIsPlaying = false;
-			m_nSeqElapsedUs = 0;
-
-			// Send MIDI panic: All Notes Off (CC 123) + Reset All Controllers (CC 121)
-			// on all 16 channels so no notes are left stuck in the synth.
-			u8 panic[6];
-			for (unsigned ch = 0; ch < 16; ++ch)
-			{
-				panic[0] = 0xB0u | ch; panic[1] = 0x7Bu; panic[2] = 0x00u; // All Notes Off
-				panic[3] = 0xB0u | ch; panic[4] = 0x79u; panic[5] = 0x00u; // Reset All Controllers
-				m_Core3MIDIRxBuffer.Enqueue(panic, sizeof(panic));
-			}
-		}
-
-		// Handle ready-to-play signal (Core 0 loaded the file, now Core 3 starts it)
-		if (m_bSeqReadyToPlay)
-		{
-			m_bSeqReadyToPlay = false;
-			__sync_synchronize(); // ensure m_pSequencer writes from Core 0 are visible
-
-			if (m_pSequencer && m_pSequencer->IsLoaded())
-			{
-				nSeqStartTick = CTimer::GetClockTicks();
-				m_pSequencer->Start(nSeqStartTick);
-				m_bSeqIsPlaying = true;
-				m_bSeqFinished  = false;
-				m_nSeqElapsedUs = 0;
-			}
-		}
-
-		// Playback
-		if (m_pSequencer && m_pSequencer->IsRunning())
-		{
-			const unsigned nNow = CTimer::GetClockTicks();
-			const size_t nBytes = m_pSequencer->PopDueBytes(nNow, Buffer, sizeof(Buffer));
-			if (nBytes > 0)
-				m_Core3MIDIRxBuffer.Enqueue(Buffer, nBytes);
-
-			m_nSeqElapsedUs = nNow - nSeqStartTick;
-
-			if (!m_pSequencer->IsRunning())
-			{
-				if (m_bSeqLoopEnabled)
-				{
-					// Restart from beginning
-					nSeqStartTick = CTimer::GetClockTicks();
-					m_pSequencer->Start(nSeqStartTick);
-					m_nSeqElapsedUs = 0;
-				}
-				else
-				{
-					// Song ended — send panic and mark finished
-					m_bSeqFinished  = true;
-					m_bSeqIsPlaying = false;
-
-					u8 panic[6];
-					for (unsigned ch = 0; ch < 16; ++ch)
-					{
-						panic[0] = 0xB0u | ch; panic[1] = 0x7Bu; panic[2] = 0x00u;
-						panic[3] = 0xB0u | ch; panic[4] = 0x79u; panic[5] = 0x00u;
-						m_Core3MIDIRxBuffer.Enqueue(panic, sizeof(panic));
-					}
-				}
-			}
-		}
-	}
-}
-
 void CMT32Pi::Run(unsigned nCore)
 {
 	// Assign tasks to different CPU cores
@@ -1329,9 +1376,6 @@ void CMT32Pi::Run(unsigned nCore)
 
 		case 2:
 			return AudioTask();
-
-		case 3:
-			return Core3SequencerTask();
 
 		default:
 			break;
@@ -1694,12 +1738,24 @@ void CMT32Pi::UpdateMIDI()
 		s_pThis->m_nActiveSenseTime = s_pThis->m_pTimer->GetTicks();
 	}
 
-	// Drain sequencer bytes produced by Core 3
-	while ((nBytes = m_Core3MIDIRxBuffer.Dequeue(Buffer, sizeof(Buffer))) > 0)
+	// Drive FluidSequencer player from Core 0 and drain produced MIDI bytes
+	if (m_pFluidSequencer)
 	{
-		m_eMidiSource = static_cast<u8>(EMidiSource::Player);
-		ParseMIDIBytes(Buffer, nBytes);
-		s_pThis->m_nActiveSenseTime = s_pThis->m_pTimer->GetTicks();
+		m_pFluidSequencer->Tick();
+
+		while ((nBytes = m_pFluidSequencer->DrainMIDIBytes(Buffer, sizeof(Buffer))) > 0)
+		{
+			m_eMidiSource = static_cast<u8>(EMidiSource::Player);
+			ParseMIDIBytes(Buffer, nBytes);
+			s_pThis->m_nActiveSenseTime = s_pThis->m_pTimer->GetTicks();
+		}
+
+		// Check if FluidSequencer finished playing (only fires when loop is off)
+		if (m_pFluidSequencer->IsFinished() && !m_bSeqFinished)
+		{
+			m_bSeqFinished  = true;
+			m_bSeqIsPlaying = false;
+		}
 	}
 
 	// Drain web keyboard bytes (injected from web handler context)
@@ -1724,9 +1780,6 @@ void CMT32Pi::PurgeMIDIBuffers()
 		ParseMIDIBytes(Buffer, nBytes, true);
 
 	while ((nBytes = m_MIDIRxBuffer.Dequeue(Buffer, sizeof(Buffer))) > 0)
-		ParseMIDIBytes(Buffer, nBytes, true);
-
-	while ((nBytes = m_Core3MIDIRxBuffer.Dequeue(Buffer, sizeof(Buffer))) > 0)
 		ParseMIDIBytes(Buffer, nBytes, true);
 
 	while ((nBytes = m_WebMIDIRxBuffer.Dequeue(Buffer, sizeof(Buffer))) > 0)

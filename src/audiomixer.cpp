@@ -106,11 +106,14 @@ void CAudioMixer::Render(float* pOutput, size_t nFrames)
 	{
 		m_pSoloEngine->Render(pOutput, nFrames);
 
-		// Apply master volume if it's not unity
-		if (m_fMasterVolume < 1.0f)
+		// Apply per-engine volume and master volume
+		int idx = FindEngine(m_pSoloEngine);
+		float fVol = (idx >= 0) ? m_Engines[idx].fVolume : 1.0f;
+		float fGain = fVol * m_fMasterVolume;
+		if (fGain < 1.0f)
 		{
 			for (size_t i = 0; i < nSamples; ++i)
-				pOutput[i] *= m_fMasterVolume;
+				pOutput[i] *= fGain;
 		}
 		return;
 	}

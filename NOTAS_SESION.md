@@ -1,65 +1,82 @@
 # Notas de sesión - mt32-pi en Raspberry Pi 3 (64-bit) con FluidSynth 2.5.3
 
-## Estado rapido (15 de marzo de 2026)
-- Rama de trabajo activa: `feat/midi-mixer-router`.
-- Base: `main` en `8ce1480`.
+## Estado rapido (17 de marzo de 2026)
+- Rama de trabajo activa: `feat/fluid-sequencer-ui`.
+- Base: `main` en `6115b21` (Merge PR #14).
 - Toolchain aarch64 validado: `~/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-elf/bin`.
-- Build local: `make BOARD=pi3-64 -j$(nproc)` OK (kernel8.img ~1.51MB).
+- Build local: `PATH=... make -j4` OK (kernel8.img ~739 KB gzip).
 - Despliegue por FTP validado en `192.168.1.88` con credenciales `mt32-pi/mt32-pi`.
 - Tests: doctest v2.4.11, 71 tests, 949 assertions pass.
 
-### Estado funcional (ultimo despliegue 15 mar 2026)
+### Estado funcional (ultimo despliegue 17 mar 2026)
 - **MIDI Router** (`CMIDIRouter`): enrutamiento por canal a MT-32/FluidSynth.
   - 4 presets: SingleMT32, SingleFluid, SplitGM, Custom.
-  - Channel remap (canal entrada → canal salida diferente).
-  - Layering (duplicar NoteOn/Off a ambos motores en canales seleccionados).
-  - CC filters per-engine (allow/block CCs individuales por motor).
-- **Audio Mixer** (`CAudioMixer`): mezcla en float de ambos motores.
-  - Volumen y pan independiente por motor.
-  - Solo mode (solo un motor activo) / dual mode (ambos).
-- **Web UI** — pagina `/mixer`:
-  - Preset selector, enable/disable dual mode.
-  - Tabla de 16 canales con: Engine, Remap, Layer, **Instrument name**, Activity meter.
-  - Volumen/pan sliders por motor.
-  - Audio performance monitor (render us, avg, peak, deadline, CPU load %).
-  - Meters de actividad por canal via WebSocket en tiempo real.
-- **Web UI** — pagina `/` (status):
-  - Link al mixer funcional (HTML no escapado).
-  - WebSocket: keyboard, piano roll, meters con colores por engine (cyan=MT-32, magenta=FluidSynth).
-  - Meter labels muestran engine asignado en modo mixer.
-- **Instrument names** en mixer:
-  - FluidSynth: `fluid_synth_get_channel_preset()` + `fluid_preset_get_name()` por canal.
-  - MT-32: `getPatchName(part)` mapeado via channel→part lookup. Canales sin parte = "—".
-  - Respeta channel remap (pregunta al motor por el canal remapeado).
-- **Stuck notes fix**: CC 120 + CC 123 al motor antiguo en cambio de engine, AllSoundOff en cambio de preset.
-- **Sync Sound ↔ Mixer**: `SetMixerPreset()` sincroniza `m_pCurrentSynth` en presets Single.
+  - Channel remap, layering, CC filters per-engine.
+- **Audio Mixer** (`CAudioMixer`): mezcla en float de ambos motores. Volumen/pan/solo por motor.
+  - Fix: solo mode ahora aplica el volumen per-engine correcto (bugfix de esta sesion).
+- **CFluidSequencer** (nuevo, sustituye al antiguo `CMIDISequencer` en Core 3):
+  - Wrapper baremetal de `fluid_player_t`, ejecutado en **Core 0** dentro de `UpdateMIDI()`.
+  - Seek por tick: `fluid_player_seek()` con MIDI panic previo (16 canales, CC 0x7B + 0x79).
+  - Control de tempo: multiplicador ajustable en tiempo real via `fluid_player_set_playback_callback`.
+  - Siempre activo mientras FluidSynth esta disponible (ya no depende de `m_bMixerEnabled`).
+- **Web UI** — pagina `/sequencer` (rediseñada):
+  - Tarjeta "Now Playing" con nombre de archivo, duracion, tamano KB.
+  - Barra de progreso clickable (seek). Interpolacion del lado del cliente (150 ms) para animacion fluida.
+  - Pills informativas: BPM · PPQN/Division · Tempo · Tick actual · Tamano KB.
+  - Seccion Transport: Play/Pause/Stop, Loop toggle, botones +/- Tempo 0.1x.
+- **Web UI** — paginas `/mixer`, `/sound`, `/` igual que sesion anterior.
+- **WebSocket** (`websocketdaemon.cpp`):
+  - `kTxBuf` ampliado 1024 → 3072 bytes (JSON superaba 1024, frames eran descartados silenciosamente).
+  - Nuevos campos en JSON: `bpm`, `current_tick`, `total_ticks`, `division`, `tempo_multiplier`, `file_size_kb`.
+- **SoundFont: polyphony y channel type** (nuevo en esta sesion):
+  - `SetPolyphony(n)` / `GetPolyphony()` — limita voces FluidSynth.
+  - `SetChannelType(ch, type)` / `GetPercussionMask()` — marca canales como GM Drums.
+  - Expuesto en Web UI y API.
+- **SoundFont: tuning presets** (nuevo en esta sesion):
+  - 7 afinaciones: Equal, Werckmeister III, Kirnberger III, Meantone, Pythagorean, Just Intonation, Vallotti.
+  - `SetTuning(preset)` aplica microtonos via `fluid_synth_activate_key_tuning`.
 
-### Archivos modificados (vs main 8ce1480)
+### Archivos modificados (vs main 6115b21)
 **Modificados:**
-- `Kernel.mk` — link audiomixer.o, midirouter.o
-- `include/config.def`, `include/config.h` — opcion MixerEnabled
-- `include/lcd/ui.h` — menu items mixer
-- `include/mt32pi.h` — TMixerStatus, metodos mixer/router
-- `include/synth/mt32synth.h` — GetChannelInstrumentName override
-- `include/synth/soundfontsynth.h` — GetChannelInstrumentName override
-- `include/synth/synthbase.h` — virtual GetChannelInstrumentName
-- `src/config.cpp` — parseo MixerEnabled
-- `src/lcd/ui_menu.cpp` — menu mixer entries
-- `src/mt32pi.cpp` — mixer control, routing, stuck notes, preset sync, instrument query
-- `src/net/webdaemon.cpp` — mixer page, API endpoints, status link fix, instrument column
-- `src/net/websocketdaemon.cpp` — engine info + mixer flag en JSON
-- `src/synth/mt32synth.cpp` — GetChannelInstrumentName impl
-- `src/synth/soundfontsynth.cpp` — GetChannelInstrumentName impl
+- `Kernel.mk` — `src/midisequencer.o` → `src/fluidsequencer.o`
+- `include/mt32pi.h` — `TSequencerStatus` extendido, nuevos metodos sequencer/soundfont, `CFluidSequencer*`, eliminado Core3 task
+- `include/synth/soundfontsynth.h` — `TTuningPreset`, polyphony, channel type, `GetFluidSynth()`
+- `src/audiomixer.cpp` — fix solo mode: aplica `fVol * m_fMasterVolume`
+- `src/mt32pi.cpp` — eliminado CMIDISequencer + Core3 task; FluidSequencer en Core 0; `SequencerSeek`, `SequencerSetTempoMultiplier`, `SequencerSetTempoBPM`; `GetSequencerStatus()` con todos los campos
+- `src/net/webdaemon.cpp` — pagina `/sequencer` reescrita, endpoints seek/tempo, polyphony/channel-type API
+- `src/net/websocketdaemon.cpp` — `kTxBuf` 1024→3072, nuevos campos BPM/ticks/division/tempo/file_size
+- `src/synth/soundfontsynth.cpp` — impl SetTuning, SetPolyphony, SetChannelType
 
 **Nuevos:**
-- `include/audiomixer.h`, `src/audiomixer.cpp` — CAudioMixer
-- `include/midirouter.h`, `src/midirouter.cpp` — CMIDIRouter
-- `tests/` — unit tests (midirouter, audiomixer, doctest)
+- `include/fluidsequencer.h`, `src/fluidsequencer.cpp` — CFluidSequencer
 
 ### Proximo paso recomendado
-- PR desde `feat/midi-mixer-router` hacia `main`.
+- PR desde `feat/fluid-sequencer-ui` hacia `main`.
 
 ## Registro de sesiones
+
+### 17 de marzo de 2026 (FluidSequencer + sequencer UI redesign)
+- **Eliminacion de CMIDISequencer**: eliminado el sequencer basado en Core 3. `src/midisequencer.o` reemplazado en `Kernel.mk` por `src/fluidsequencer.o`. Headers/includes limpiados.
+- **CFluidSequencer** (`include/fluidsequencer.h`, `src/fluidsequencer.cpp`):
+  - Wrapper baremetal de `fluid_player_t`: `LoadFile`, `Play`, `Pause`, `Stop`, `Seek`, `SetTempoMultiplier`.
+  - `Seek(nTicks)`: envia MIDI panic (CC 0x7B + 0x79 en los 16 canales) antes de `fluid_player_seek()` para eliminar notas colgadas.
+  - Ejecutado en Core 0 dentro de `UpdateMIDI()` (no requiere Core 3).
+  - Siempre activo: eliminada la condicion `m_bMixerEnabled &&` en `SequencerPlayFile()`.
+- **`TSequencerStatus` extendido**: nuevos campos `nCurrentTick`, `nTotalTicks`, `nBPM`, `nTempoMultiplier`, `nDivision`, `nFileSizeKB`, `pDiag`. `nFileSizeKB` poblado via `f_stat()` en `SequencerPlayFile`.
+- **Nuevos metodos publicos en `CMT32Pi`**: `SequencerSeek(nTicks)`, `SequencerSetTempoMultiplier(x)`, `SequencerSetTempoBPM(bpm)`.
+- **Fix WebSocket (`kTxBuf`)**: el buffer de TX era 1024 bytes, pero el JSON expandido supera ese limite → `BuildFrame` devuelvia -1 silenciosamente y no se enviaba ningun frame. Ampliado a 3072 bytes. Nuevos campos JSON: `bpm`, `current_tick`, `total_ticks`, `division`, `tempo_multiplier`, `file_size_kb`.
+- **Fix AudioMixer solo mode**: en el path solo, el volumen per-engine no se aplicaba; solo se aplicaba `m_fMasterVolume`. Corregido para aplicar `fVol * m_fMasterVolume`.
+- **SoundFont: polyphony**: `SetPolyphony(n)` / `GetPolyphony()` — `fluid_synth_set_polyphony`. Expuesto en API y web.
+- **SoundFont: channel type**: `SetChannelType(ch, type)` y bitmask `m_nPercussionMask`. Expuesto en API y UI (botones Mel/Drm por canal).
+- **SoundFont: tuning presets** (`TTuningPreset`): 7 afinaciones historicas via `fluid_synth_activate_key_tuning`. Expuesto en API y web.
+- **Pagina `/sequencer` reescrita** en `webdaemon.cpp`:
+  - Tarjeta "Now Playing": nombre de archivo, duracion, tamano KB.
+  - Barra de progreso clickable (seek al tick correspondiente). Fix: parametro era `tick=` pero el servidor esperaba `ticks=` → corregido a `ticks=`.
+  - Interpolacion del lado del cliente (`setInterval` 150 ms, variable `_ct`) para barra fluida entre updates WS de 250 ms.
+  - Fix `_ct`: `d.tempo_multiplier || 1.0` reseteaba a 1.0 cuando el campo era `undefined` → cambiado a `if(d.tempo_multiplier !== undefined) _ct = d.tempo_multiplier`.
+  - Pills: BPM · PPQN/Division · Tempo · Tick · KB.
+  - Seccion Transport: Play/Pause/Stop, Loop, botones +/−0.1x Tempo.
+- Build OK (`EXIT:0`), kernel8.img ~739 KB gzip, deploy FTP OK a 192.168.1.88.
 
 ### 15 de marzo de 2026 (mixer UX + instrument names)
 - **Fix 1**: Link del Mixer en Status — `AppendSectionStart` escapaba el HTML del `<a>`. Reemplazado por HTML directo como hace Sequencer.

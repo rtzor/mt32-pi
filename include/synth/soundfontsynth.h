@@ -31,6 +31,18 @@
 #include "synth/fxprofile.h"
 #include "synth/synthbase.h"
 
+enum TTuningPreset
+{
+	TuningEqual = 0,
+	TuningWerckmeisterIII,
+	TuningKirnbergerIII,
+	TuningMeantone,
+	TuningPythagorean,
+	TuningJustIntonation,
+	TuningVallotti,
+	TuningCount
+};
+
 class CSoundFontSynth : public CSynthBase
 {
 public:
@@ -55,6 +67,7 @@ public:
 	bool SwitchSoundFont(size_t nIndex);
 	size_t GetSoundFontIndex() const { return m_nCurrentSoundFontIndex; }
 	CSoundFontManager& GetSoundFontManager() { return m_SoundFontManager; }
+	fluid_synth_t* GetFluidSynth() const { return m_pSynth; }
 
 	// Real-time FX control
 	void SetGain(float nGain);
@@ -79,6 +92,16 @@ public:
 	int GetChorusVoices() const { return m_nChorusVoices; }
 	void SetChorusSpeed(float nSpeed);
 	float GetChorusSpeed() const { return m_nChorusSpeed; }
+
+	void SetTuning(int nPreset);
+	int GetTuning() const { return m_nTuningPreset; }
+	static const char* GetTuningName(int nPreset);
+
+	void SetPolyphony(int nPolyphony);
+	int GetPolyphony() const { return m_nPolyphony; }
+
+	void SetChannelType(int nChannel, int nType);
+	u16 GetPercussionMask() const { return m_nPercussionMask; }
 
 private:
 	bool Reinitialize(const char* pSoundFontPath, const TFXProfile* pFXProfile);
@@ -108,8 +131,10 @@ private:
 	int   m_nChorusVoices;
 	float m_nChorusSpeed;
 
+	int   m_nPolyphony;
 	u16 m_nPercussionMask;
 	size_t m_nCurrentSoundFontIndex;
+	int   m_nTuningPreset;
 
 	CSoundFontManager m_SoundFontManager;
 

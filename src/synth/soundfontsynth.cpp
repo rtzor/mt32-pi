@@ -129,6 +129,36 @@ extern "C"
 	}
 }
 
+// Historical temperament tuning tables (12 pitch values in cents, C through B)
+static const double TuningPresets[][12] =
+{
+	// Equal temperament (12-TET)
+	{0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0, 1100.0},
+	// Werckmeister III
+	{0.0, 90.225, 192.180, 294.135, 390.225, 498.045, 588.270, 696.090, 792.180, 888.270, 996.090, 1092.180},
+	// Kirnberger III
+	{0.0, 90.225, 193.157, 294.135, 386.314, 498.045, 590.225, 696.578, 792.180, 889.735, 996.090, 1088.269},
+	// Quarter-comma meantone
+	{0.0, 76.049, 193.157, 310.265, 386.314, 503.422, 579.471, 696.578, 772.627, 889.735, 1006.843, 1082.892},
+	// Pythagorean
+	{0.0, 113.685, 203.910, 294.135, 407.820, 498.045, 611.730, 701.955, 815.640, 905.865, 996.090, 1109.775},
+	// Just intonation (5-limit, C major)
+	{0.0, 111.731, 203.910, 315.641, 386.314, 498.045, 590.224, 701.955, 813.686, 884.359, 1017.596, 1088.269},
+	// Vallotti (Young)
+	{0.0, 94.135, 196.090, 298.045, 392.180, 501.955, 592.180, 698.045, 796.090, 894.135, 1000.000, 1090.225},
+};
+
+static const char* const TuningPresetNames[] =
+{
+	"Equal",
+	"Werckmeister III",
+	"Kirnberger III",
+	"Meantone 1/4",
+	"Pythagorean",
+	"Just Intonation",
+	"Vallotti",
+};
+
 CSoundFontSynth::CSoundFontSynth(unsigned nSampleRate)
 	: CSynthBase(nSampleRate),
 
@@ -144,8 +174,10 @@ CSoundFontSynth::CSoundFontSynth(unsigned nSampleRate)
 	  m_bChorusActive(true),
 	  m_nChorusDepth(8.0f),
 
+	  m_nPolyphony(0),
 	  m_nPercussionMask(1 << 9),
-	  m_nCurrentSoundFontIndex(0)
+	  m_nCurrentSoundFontIndex(0),
+	  m_nTuningPreset(TuningEqual)
 {
 }
 
@@ -402,6 +434,7 @@ bool CSoundFontSynth::Reinitialize(const char* pSoundFontPath, const TFXProfile*
 	}
 
 	fluid_synth_set_polyphony(m_pSynth, pConfig->FluidSynthPolyphony);
+	m_nPolyphony = pConfig->FluidSynthPolyphony;
 
 	m_nInitialGain = pFXProfile->nGain.ValueOr(pConfig->FluidSynthDefaultGain);
 	fluid_synth_set_gain(m_pSynth, m_nVolume / 100.0f * m_nInitialGain);
@@ -429,6 +462,15 @@ bool CSoundFontSynth::Reinitialize(const char* pSoundFontPath, const TFXProfile*
 	fluid_synth_set_chorus_group_level(m_pSynth, -1, m_nChorusLevel);
 	fluid_synth_set_chorus_group_nr(m_pSynth, -1, m_nChorusVoices);
 	fluid_synth_set_chorus_group_speed(m_pSynth, -1, m_nChorusSpeed);
+
+	// Reapply tuning if non-equal
+	if (m_nTuningPreset != TuningEqual)
+	{
+		fluid_synth_activate_octave_tuning(m_pSynth, 0, m_nTuningPreset,
+			TuningPresetNames[m_nTuningPreset], TuningPresets[m_nTuningPreset], false);
+		for (int ch = 0; ch < 16; ++ch)
+			fluid_synth_activate_tuning(m_pSynth, ch, 0, m_nTuningPreset, true);
+	}
 
 #ifndef NDEBUG
 	DumpFXSettings();
@@ -724,6 +766,69 @@ void CSoundFontSynth::SetChorusSpeed(float nSpeed)
 	m_Lock.Acquire();
 	if (m_pSynth)
 		fluid_synth_set_chorus_group_speed(m_pSynth, -1, nSpeed);
+	m_Lock.Release();
+}
+
+const char* CSoundFontSynth::GetTuningName(int nPreset)
+{
+	if (nPreset < 0 || nPreset >= TuningCount)
+		return "Equal";
+	return TuningPresetNames[nPreset];
+}
+
+void CSoundFontSynth::SetTuning(int nPreset)
+{
+	if (nPreset < 0 || nPreset >= TuningCount)
+		nPreset = TuningEqual;
+
+	m_nTuningPreset = nPreset;
+	m_Lock.Acquire();
+	if (m_pSynth)
+	{
+		if (nPreset == TuningEqual)
+		{
+			// Deactivate tuning on all channels (return to equal temperament)
+			for (int ch = 0; ch < 16; ++ch)
+				fluid_synth_deactivate_tuning(m_pSynth, ch, true);
+		}
+		else
+		{
+			// Create the octave tuning table (bank 0, prog = preset index)
+			fluid_synth_activate_octave_tuning(m_pSynth, 0, nPreset,
+				TuningPresetNames[nPreset], TuningPresets[nPreset], false);
+			// Activate on all channels
+			for (int ch = 0; ch < 16; ++ch)
+				fluid_synth_activate_tuning(m_pSynth, ch, 0, nPreset, true);
+		}
+	}
+	m_Lock.Release();
+}
+
+void CSoundFontSynth::SetPolyphony(int nPolyphony)
+{
+	if (nPolyphony < 1 || nPolyphony > 65535)
+		return;
+
+	m_nPolyphony = nPolyphony;
+	m_Lock.Acquire();
+	if (m_pSynth)
+		fluid_synth_set_polyphony(m_pSynth, nPolyphony);
+	m_Lock.Release();
+}
+
+void CSoundFontSynth::SetChannelType(int nChannel, int nType)
+{
+	if (nChannel < 0 || nChannel >= 16)
+		return;
+	if (nType != 0 && nType != 1)
+		return;
+
+	// Update percussion mask
+	m_nPercussionMask ^= (-nType ^ m_nPercussionMask) & (1 << nChannel);
+
+	m_Lock.Acquire();
+	if (m_pSynth)
+		fluid_synth_set_channel_type(m_pSynth, nChannel, nType);
 	m_Lock.Release();
 }
 
