@@ -28,6 +28,7 @@
 #include <fatfs/ff.h>
 
 #include <cstdarg>
+#include <cstdlib>
 
 #include "lcd/drivers/hd44780.h"
 #include "lcd/drivers/ssd1306.h"
@@ -2303,6 +2304,7 @@ CMT32Pi::TMixerStatus CMT32Pi::GetMixerStatus() const
 		s.pChannelEngine[i] = m_MIDIRouter.GetChannelEngineName(static_cast<u8>(i));
 		s.nChannelRemap[i]  = m_MIDIRouter.GetChannelRemap(static_cast<u8>(i));
 		s.bLayered[i]       = m_MIDIRouter.GetLayering(static_cast<u8>(i));
+		s.nChannelVolume[i] = static_cast<int>(m_MIDIRouter.GetChannelVolume(static_cast<u8>(i)) * 100.0f + 0.5f);
 
 		CSynthBase* pEng = m_MIDIRouter.GetChannelEngine(static_cast<u8>(i));
 		const u8 nRemapped = m_MIDIRouter.GetChannelRemap(static_cast<u8>(i));
@@ -2505,6 +2507,109 @@ bool CMT32Pi::SetMixerLayering(u8 nChannel, bool bLayered)
 bool CMT32Pi::SetMixerAllLayering(bool bLayered)
 {
 	m_MIDIRouter.SetAllLayering(bLayered);
+	return true;
+}
+
+bool CMT32Pi::SetMixerChannelVolume(u8 nChannel, int nVolumePercent)
+{
+	if (nChannel >= 16)
+		return false;
+	const float fVol = static_cast<float>(nVolumePercent) / 100.0f;
+	m_MIDIRouter.SetChannelVolume(nChannel, fVol);
+	return true;
+}
+
+int CMT32Pi::GetMixerChannelVolume(u8 nChannel) const
+{
+	return static_cast<int>(m_MIDIRouter.GetChannelVolume(nChannel) * 100.0f + 0.5f);
+}
+
+void CMT32Pi::ResetMixerChannelVolumes()
+{
+	m_MIDIRouter.ResetChannelVolumes();
+}
+
+bool CMT32Pi::SaveRouterPreset() const
+{
+	constexpr const char* Path = "SD:router_preset.dat";
+	FIL fp;
+	if (f_open(&fp, Path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
+		return false;
+
+	// Format: 16 lines of: engine,remap,layer,vol
+	// engine: 0=mt32 1=fluidsynth
+	// remap: 0-15 (internal, 0-based)
+	// layer: 0/1
+	// vol: 0-100
+	for (unsigned i = 0; i < 16; ++i)
+	{
+		const char* pName  = m_MIDIRouter.GetChannelEngineName(static_cast<u8>(i));
+		const u8 nRemap    = m_MIDIRouter.GetChannelRemap(static_cast<u8>(i));
+		const bool bLayer  = m_MIDIRouter.GetLayering(static_cast<u8>(i));
+		const int  nVol    = GetMixerChannelVolume(static_cast<u8>(i));
+		const int  nEngine = (pName && pName[0] == 'F') ? 1 : 0;  // 'F'luidSynth=1, else=0 (MT-32)
+
+		char Line[32];
+		unsigned nLen = static_cast<unsigned>(
+			__builtin_snprintf(Line, sizeof(Line), "%d,%d,%d,%d\n",
+				nEngine, static_cast<int>(nRemap), bLayer ? 1 : 0, nVol));
+		if (nLen >= sizeof(Line)) nLen = sizeof(Line) - 1;
+
+		UINT nWritten;
+		if (f_write(&fp, Line, nLen, &nWritten) != FR_OK)
+		{
+			f_close(&fp);
+			return false;
+		}
+	}
+
+	f_close(&fp);
+	return true;
+}
+
+bool CMT32Pi::LoadRouterPreset()
+{
+	constexpr const char* Path = "SD:router_preset.dat";
+	FIL fp;
+	if (f_open(&fp, Path, FA_READ) != FR_OK)
+		return false;
+
+	for (unsigned i = 0; i < 16; ++i)
+	{
+		// Read one line (up to 31 chars + NUL)
+		char Line[32];
+		unsigned nLen = 0;
+		char c;
+		UINT nRead;
+		while (nLen < sizeof(Line) - 1)
+		{
+			if (f_read(&fp, &c, 1, &nRead) != FR_OK || nRead == 0)
+				break;
+			if (c == '\n')
+				break;
+			if (c != '\r')
+				Line[nLen++] = c;
+		}
+		Line[nLen] = '\0';
+		if (nLen == 0)
+			break;
+
+		// Parse: engine,remap,layer,vol
+		char* p;
+		const long lEngine = strtol(Line, &p, 10); if (!p || *p != ',') continue; p++;
+		const long lRemap  = strtol(p,    &p, 10); if (!p || *p != ',') continue; p++;
+		const long lLayer  = strtol(p,    &p, 10); if (!p || *p != ',') continue; p++;
+		const long lVol    = strtol(p, nullptr, 10);
+
+		CSynthBase* pEng = (lEngine == 1) ? static_cast<CSynthBase*>(m_pSoundFontSynth) : static_cast<CSynthBase*>(m_pMT32Synth);
+		m_MIDIRouter.SetChannelEngine(static_cast<u8>(i), pEng);
+		m_MIDIRouter.SetChannelRemap(static_cast<u8>(i), static_cast<u8>(lRemap));
+		m_MIDIRouter.SetLayering(static_cast<u8>(i), lLayer != 0);
+		SetMixerChannelVolume(static_cast<u8>(i), static_cast<int>(lVol));
+	}
+
+	f_close(&fp);
+	m_MIDIRouter.ApplyPreset(TRouterPreset::Custom);
 	return true;
 }
 

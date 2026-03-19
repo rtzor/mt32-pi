@@ -39,6 +39,7 @@ CMIDIRouter::CMIDIRouter()
 		m_pChannelMap[i] = nullptr;
 		m_nChannelRemap[i] = static_cast<u8>(i);  // identity mapping
 		m_bLayered[i] = false;
+		m_fChannelVolume[i] = 1.0f;
 	}
 	ResetCCFilters();
 }
@@ -125,6 +126,15 @@ void CMIDIRouter::RouteShortMessage(u32 nMessage)
 	{
 		const u8 nCC = static_cast<u8>((nMessage >> 8) & 0x7F);
 
+		// Per-channel volume: scale CC7 (volume) by the channel multiplier
+		u32 nMsgToSend = nRouted;
+		if (nCC == 7 && m_fChannelVolume[nChannel] < 1.0f)
+		{
+			const u8 nRawVal = static_cast<u8>((nMessage >> 16) & 0x7F);
+			const u8 nScaled = static_cast<u8>(nRawVal * m_fChannelVolume[nChannel] + 0.5f);
+			nMsgToSend = (nRouted & 0xFF00FFFFu) | (static_cast<u32>(nScaled) << 16);
+		}
+
 		auto SendIfAllowed = [&](CSynthBase* pEng, unsigned nEngIdx, u32 nMsg)
 		{
 			if (pEng && m_bCCFilter[nEngIdx][nCC])
@@ -132,17 +142,17 @@ void CMIDIRouter::RouteShortMessage(u32 nMessage)
 		};
 
 		if (pTarget == m_pMT32)
-			SendIfAllowed(m_pMT32, EngMT32, nRouted);
+			SendIfAllowed(m_pMT32, EngMT32, nMsgToSend);
 		else if (pTarget == m_pFluidSynth)
-			SendIfAllowed(m_pFluidSynth, EngFluid, nRouted);
+			SendIfAllowed(m_pFluidSynth, EngFluid, nMsgToSend);
 
 		// Layering: send CC to the other engine too (if allowed)
 		if (m_bLayered[nChannel])
 		{
 			if (pTarget != m_pMT32 && m_pMT32)
-				SendIfAllowed(m_pMT32, EngMT32, nRouted);
+				SendIfAllowed(m_pMT32, EngMT32, nMsgToSend);
 			if (pTarget != m_pFluidSynth && m_pFluidSynth)
-				SendIfAllowed(m_pFluidSynth, EngFluid, nRouted);
+				SendIfAllowed(m_pFluidSynth, EngFluid, nMsgToSend);
 		}
 		return;
 	}
@@ -319,4 +329,31 @@ bool CMIDIRouter::HasAnyLayering() const
 		if (m_bLayered[i])
 			return true;
 	return false;
+}
+
+// ---------------------------------------------------------------------------
+// Per-channel volume
+// ---------------------------------------------------------------------------
+
+void CMIDIRouter::SetChannelVolume(u8 nChannel, float fVolume)
+{
+	if (nChannel < NumChannels)
+	{
+		if (fVolume < 0.0f) fVolume = 0.0f;
+		if (fVolume > 1.0f) fVolume = 1.0f;
+		m_fChannelVolume[nChannel] = fVolume;
+	}
+}
+
+float CMIDIRouter::GetChannelVolume(u8 nChannel) const
+{
+	if (nChannel < NumChannels)
+		return m_fChannelVolume[nChannel];
+	return 1.0f;
+}
+
+void CMIDIRouter::ResetChannelVolumes()
+{
+	for (unsigned i = 0; i < NumChannels; ++i)
+		m_fChannelVolume[i] = 1.0f;
 }

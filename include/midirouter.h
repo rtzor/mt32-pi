@@ -101,6 +101,11 @@ public:
 	void SetAllLayering(bool bLayered);
 	bool HasAnyLayering() const;
 
+	// Per-channel volume (scales CC7 messages before routing, 0.0–1.0)
+	void  SetChannelVolume(u8 nChannel, float fVolume);
+	float GetChannelVolume(u8 nChannel) const;
+	void  ResetChannelVolumes();  // reset all to 1.0
+
 private:
 	bool         m_bEnabled;
 	TRouterPreset m_Preset;
@@ -108,6 +113,7 @@ private:
 	u8           m_nChannelRemap[NumChannels];  // target channel for each source
 	bool         m_bCCFilter[MaxEngines][NumCCs]; // true = allow, false = block
 	bool         m_bLayered[NumChannels];         // true = duplicate notes to both engines
+	float        m_fChannelVolume[NumChannels];   // CC7 scaling factor per channel (1.0 = full)
 	CSynthBase*  m_pMT32;
 	CSynthBase*  m_pFluidSynth;
 };

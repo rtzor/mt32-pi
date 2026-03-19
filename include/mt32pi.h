@@ -161,11 +161,12 @@ public:
 		float fMT32Pan;
 		float fFluidPan;
 		float fMasterVolume;
-		// Per-channel: engine name string, remap target, and layering flag
+		// Per-channel: engine name string, remap target, layering flag, and volume
 		const char* pChannelEngine[16];
 		const char* pChannelInstrument[16];
 		u8          nChannelRemap[16];
 		bool        bLayered[16];
+		int         nChannelVolume[16];  // 0–100, per-channel CC7 scaling
 		// Audio render performance
 		unsigned nRenderUs;      // last render time in µs
 		unsigned nRenderAvgUs;   // rolling average render time
@@ -188,6 +189,15 @@ public:
 	void ResetMixerCCFilters();
 	bool SetMixerLayering(u8 nChannel, bool bLayered);
 	bool SetMixerAllLayering(bool bLayered);
+
+	// Per-channel volume
+	bool SetMixerChannelVolume(u8 nChannel, int nVolumePercent);  // 0–100
+	int  GetMixerChannelVolume(u8 nChannel) const;
+	void ResetMixerChannelVolumes();
+
+	// Save / load custom router preset to SD card
+	bool SaveRouterPreset() const;
+	bool LoadRouterPreset();
 
 	// ---- Sequencer control (called from Core 0 / web handler) ----
 	struct TSequencerStatus
