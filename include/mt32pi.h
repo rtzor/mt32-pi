@@ -444,18 +444,18 @@ private:
 	CRingBuffer<u8, MIDIRxBufferSize> m_MIDIRxBuffer;
 	CRingBuffer<u8, MIDIRxBufferSize> m_WebMIDIRxBuffer;  // Web keyboard → Core 0
 
-	// ---- Sequencer (FluidSequencer on Core 0) ----
+	// ---- Sequencer (FluidSequencer, runs entirely on Core 0) ----
 	static constexpr size_t SeqPathMax = 260;
 
-	CFluidSequencer* m_pFluidSequencer;     // heap, allocated on first play
-	double           m_nTempoMultiplier;    // current tempo multiplier (for status reporting)
-	volatile bool    m_bSeqLoopEnabled;     // Core 0 writes; Core 3 reads: repeat when done
-	volatile bool    m_bSeqIsPlaying;       // Core 3 → Core 0: playback active
-	volatile bool    m_bSeqFinished;        // Core 3 → Core 0: song ended naturally
-	volatile u32     m_nSeqElapsedUs;       // Core 3 → Core 0: elapsed µs
-	volatile u32     m_nSeqDurationUs;      // Core 0 writes after LoadFromFile
-	volatile u32     m_nSeqEventCount;      // Core 0 writes after LoadFromFile
-	volatile u32     m_nSeqFileSizeKB;      // Core 0 writes after LoadFromFile
+	CFluidSequencer* m_pFluidSequencer;  // heap, allocated on first play
+	double           m_nTempoMultiplier; // current tempo multiplier (for status reporting)
+	bool    m_bSeqLoopEnabled;           // repeat when song finishes
+	bool    m_bSeqIsPlaying;             // playback active
+	bool    m_bSeqFinished;              // song ended naturally (loop=off)
+	u32     m_nSeqElapsedUs;             // elapsed µs (updated each Tick)
+	u32     m_nSeqDurationUs;            // total song duration, set after LoadFromFile
+	u32     m_nSeqEventCount;            // event count, set after LoadFromFile
+	u32     m_nSeqFileSizeKB;            // file size in KB, set after LoadFromFile
 	char             m_szSeqCurrentFile[SeqPathMax]; // Core 0 writes after LoadFromFile
 
 	// Active note snapshot (written by OnShortMessage on Core 0 task context)

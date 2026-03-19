@@ -1153,6 +1153,14 @@ void CMT32Pi::UITask()
 	m_bUITaskDone = true;
 }
 
+// AudioTask — runs exclusively on Core 2.
+//
+// Timing model:
+//   Each iteration produces nFrames of audio to keep the DMA queue full.
+//   nDeadline (µs) = nFrames / SampleRate — the hard real-time budget.
+//   The entire render (synth + optional mixer) must complete before the
+//   hardware DMA underruns.  m_nRenderAvgUs (EMA, 1/16 alpha) is exposed
+//   to Core 0 for monitoring via GetMixerStatus() / GetSystemState().
 void CMT32Pi::AudioTask()
 {
 	LOGNOTE("Audio task on Core 2 starting up");
@@ -1772,6 +1780,19 @@ void CMT32Pi::UpdateNetwork()
 	}
 }
 
+// UpdateMIDI — called every iteration of the Core 0 main loop.
+//
+// MIDI ingestion order (each feed calls ParseMIDIBytes() → CMIDIRouter → synth):
+//   1. Physical MIDI in (serial GPIO / USB serial / USB MIDI HCI)
+//      → reads from hardware or m_MIDIRxBuffer (filled by IRQ handler)
+//   2. FluidSequencer::Tick() advances the player and produces note events
+//      → DrainMIDIBytes() feeds them into ParseMIDIBytes() one chunk at a time
+//      Also updates m_bSeqFinished / m_bSeqIsPlaying when the song ends.
+//   3. Web keyboard bytes injected via HTTP handler (also Core 0, cooperative)
+//      → m_WebMIDIRxBuffer, drained last to respect physical MIDI priority
+//
+// m_eMidiSource is set per-batch so OnShortMessage() can tag active notes
+// with their origin (Physical / Player / WebUI).
 void CMT32Pi::UpdateMIDI()
 {
 	size_t nBytes;
