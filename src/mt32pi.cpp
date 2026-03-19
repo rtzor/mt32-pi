@@ -139,10 +139,14 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_nSeqElapsedUs(0),
 	  m_nSeqDurationUs(0),
 	  m_nSeqEventCount(0),
-	  m_nSeqFileSizeKB(0)
+	  m_nSeqFileSizeKB(0),
+	  m_bSeqPaused(false),
+	  m_nSeqPausedTick(0),
+	  m_bSeqAutoNext(false)
 {
 	s_pThis = this;
 	m_szSeqCurrentFile[0] = '\0';
+	m_szSeqPausedFile[0]  = '\0';
 	memset(m_activeNotes, 0, sizeof(m_activeNotes));
 	m_eMidiSource = static_cast<u8>(EMidiSource::Physical);
 }
@@ -1316,6 +1320,8 @@ CMT32Pi::TSequencerStatus CMT32Pi::GetSequencerStatus() const
 {
 	TSequencerStatus s;
 	s.bLoopEnabled  = m_bSeqLoopEnabled;
+	s.bPaused       = m_bSeqPaused;
+	s.bAutoNext     = m_bSeqAutoNext;
 	s.pFile         = m_szSeqCurrentFile;
 	s.nFileSizeKB   = m_nSeqFileSizeKB;
 
@@ -1361,6 +1367,134 @@ void CMT32Pi::SetSequencerLoop(bool bLoop)
 	m_bSeqLoopEnabled = bLoop;
 	if (m_pFluidSequencer)
 		m_pFluidSequencer->SetLoop(bLoop ? -1 : 0);
+}
+
+void CMT32Pi::SetSequencerAutoNext(bool bEnabled)
+{
+	m_bSeqAutoNext = bEnabled;
+}
+
+bool CMT32Pi::SequencerPause()
+{
+	if (!m_pFluidSequencer || !m_pFluidSequencer->IsPlaying())
+		return false;
+
+	m_nSeqPausedTick = m_pFluidSequencer->GetCurrentTick();
+	__builtin_strncpy(m_szSeqPausedFile, m_szSeqCurrentFile, SeqPathMax - 1);
+	m_szSeqPausedFile[SeqPathMax - 1] = '\0';
+
+	m_pFluidSequencer->Stop();
+	m_bSeqIsPlaying = false;
+	m_bSeqFinished  = false;
+	m_bSeqPaused    = true;
+	return true;
+}
+
+bool CMT32Pi::SequencerResume()
+{
+	if (!m_bSeqPaused || !m_szSeqPausedFile[0])
+		return false;
+
+	SequencerPlayFile(m_szSeqPausedFile);
+
+	if (m_nSeqPausedTick > 0)
+		SequencerSeek(m_nSeqPausedTick);
+
+	m_bSeqPaused     = false;
+	m_nSeqPausedTick = 0;
+	return true;
+}
+
+// Scan SD:/ and USB:/ for .mid/.midi files and return the one that is nDirection
+// positions away from pCurrentPath in alphabetical order (nDirection: +1=next, -1=prev).
+bool CMT32Pi::GetAdjacentMIDIFile(const char* pCurrentPath, int nDirection,
+                                   char* pOutPath, size_t nMaxLen) const
+{
+	static const char* const Dirs[] = { "SD:", "USB:" };
+
+	// Collect all MIDI files into a small fixed-size list
+	static const size_t kMaxFiles = 512;
+	char (*paths)[SeqPathMax] = new (std::nothrow) char[kMaxFiles][SeqPathMax];
+	if (!paths)
+		return false;
+
+	size_t nCount = 0;
+	for (const char* pDir : Dirs)
+	{
+		DIR dir;
+		if (f_opendir(&dir, pDir) != FR_OK)
+			continue;
+		FILINFO fi;
+		while (nCount < kMaxFiles && f_readdir(&dir, &fi) == FR_OK && fi.fname[0])
+		{
+			const size_t nLen = strlen(fi.fname);
+			if (nLen < 5) continue;
+			const char* pExt = fi.fname + nLen - 4;
+			if (strcasecmp(pExt, ".mid") != 0 && strcasecmp(pExt, ".midi") != 0)
+				continue;
+			snprintf(paths[nCount], SeqPathMax, "%s/%s", pDir, fi.fname);
+			nCount++;
+		}
+		f_closedir(&dir);
+	}
+
+	if (nCount == 0)
+	{
+		delete[] paths;
+		return false;
+	}
+
+	// Simple insertion sort (list is typically tiny)
+	for (size_t i = 1; i < nCount; i++)
+	{
+		char tmp[SeqPathMax];
+		memcpy(tmp, paths[i], SeqPathMax);
+		size_t j = i;
+		while (j > 0 && strcasecmp(paths[j-1], tmp) > 0)
+		{
+			memcpy(paths[j], paths[j-1], SeqPathMax);
+			j--;
+		}
+		memcpy(paths[j], tmp, SeqPathMax);
+	}
+
+	// Find current file in the sorted list
+	size_t nCurrent = 0;
+	bool bFound = false;
+	for (size_t i = 0; i < nCount; i++)
+	{
+		if (strcasecmp(paths[i], pCurrentPath) == 0)
+		{
+			nCurrent = i;
+			bFound = true;
+			break;
+		}
+	}
+
+	// If current file not found, start from beginning (next) or end (prev)
+	size_t nTarget;
+	if (!bFound)
+		nTarget = (nDirection >= 0) ? 0 : (nCount - 1);
+	else
+		nTarget = static_cast<size_t>((static_cast<int>(nCurrent) + nDirection + static_cast<int>(nCount)) % static_cast<int>(nCount));
+
+	snprintf(pOutPath, nMaxLen, "%s", paths[nTarget]);
+	delete[] paths;
+	return true;
+}
+
+void CMT32Pi::SequencerNext()
+{
+	char szNext[SeqPathMax];
+	if (GetAdjacentMIDIFile(m_szSeqCurrentFile, +1, szNext, SeqPathMax))
+		SequencerPlayFile(szNext);
+}
+
+void CMT32Pi::SequencerPrev()
+{
+	char szPrev[SeqPathMax];
+	if (GetAdjacentMIDIFile(m_szSeqCurrentFile, -1, szPrev, SeqPathMax))
+		SequencerPlayFile(szPrev);
 }
 
 bool CMT32Pi::SequencerSeek(int nTicks)
@@ -1833,6 +1967,14 @@ void CMT32Pi::UpdateMIDI()
 		{
 			m_bSeqFinished  = true;
 			m_bSeqIsPlaying = false;
+
+			// Auto-advance to the next file if enabled
+			if (m_bSeqAutoNext && m_szSeqCurrentFile[0])
+			{
+				char szNext[SeqPathMax];
+				if (GetAdjacentMIDIFile(m_szSeqCurrentFile, +1, szNext, SeqPathMax))
+					SequencerPlayFile(szNext);
+			}
 		}
 	}
 

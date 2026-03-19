@@ -784,6 +784,11 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 	const bool bIsSeqStatusPath    = strcmp(pPath, "/api/sequencer/status") == 0;
 	const bool bIsSeqPlayPath      = strcmp(pPath, "/api/sequencer/play") == 0;
 	const bool bIsSeqStopPath      = strcmp(pPath, "/api/sequencer/stop") == 0;
+	const bool bIsSeqPausePath     = strcmp(pPath, "/api/sequencer/pause") == 0;
+	const bool bIsSeqResumePath    = strcmp(pPath, "/api/sequencer/resume") == 0;
+	const bool bIsSeqNextPath      = strcmp(pPath, "/api/sequencer/next") == 0;
+	const bool bIsSeqPrevPath      = strcmp(pPath, "/api/sequencer/prev") == 0;
+	const bool bIsSeqAutoNextPath  = strcmp(pPath, "/api/sequencer/autonext") == 0;
 	const bool bIsSeqFilesPath      = strcmp(pPath, "/api/sequencer/files") == 0;
 	const bool bIsSeqLoopPath       = strcmp(pPath, "/api/sequencer/loop")  == 0;
 	const bool bIsSeqSeekPath       = strcmp(pPath, "/api/sequencer/seek")  == 0;
@@ -803,7 +808,9 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		CString JSON;
 		JSON += "{";
 		AppendJSONPairBool(JSON, "playing", s.bPlaying);
+		AppendJSONPairBool(JSON, "paused", s.bPaused);
 		AppendJSONPairBool(JSON, "loop_enabled", s.bLoopEnabled);
+		AppendJSONPairBool(JSON, "auto_next", s.bAutoNext);
 		AppendJSONPairBool(JSON, "finished", s.bFinished);
 		AppendJSONPair(JSON, "file", s.pFile ? s.pFile : "");
 		AppendJSONPairInt(JSON, "event_count", static_cast<int>(s.nEventCount));
@@ -878,6 +885,77 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 	if (bIsSeqStopPath)
 	{
 		m_pMT32Pi->SequencerStop();
+		const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(std::strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/sequencer/pause ----
+	if (bIsSeqPausePath)
+	{
+		const bool bOk = m_pMT32Pi->SequencerPause();
+		CString JSON;
+		JSON.Format("{\"ok\":%s}", bOk ? "true" : "false");
+		const unsigned nLen = JSON.GetLength();
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(JSON), nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return bOk ? HTTPOK : HTTPBadRequest;
+	}
+
+	// ---- POST /api/sequencer/resume ----
+	if (bIsSeqResumePath)
+	{
+		const bool bOk = m_pMT32Pi->SequencerResume();
+		CString JSON;
+		JSON.Format("{\"ok\":%s}", bOk ? "true" : "false");
+		const unsigned nLen = JSON.GetLength();
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(JSON), nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return bOk ? HTTPOK : HTTPBadRequest;
+	}
+
+	// ---- POST /api/sequencer/next ----
+	if (bIsSeqNextPath)
+	{
+		m_pMT32Pi->SequencerNext();
+		const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(std::strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/sequencer/prev ----
+	if (bIsSeqPrevPath)
+	{
+		m_pMT32Pi->SequencerPrev();
+		const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(std::strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/sequencer/autonext  (body: enabled=on|off) ----
+	if (bIsSeqAutoNextPath)
+	{
+		char EnabledVal[8] = {};
+		bool bEnabled = false;
+		if (pFormData && *pFormData && GetFormValue(pFormData, "enabled", EnabledVal, sizeof(EnabledVal)))
+			CConfig::ParseOption(EnabledVal, &bEnabled);
+		m_pMT32Pi->SetSequencerAutoNext(bEnabled);
 		const char* pBody = "{\"ok\":true}";
 		const unsigned nLen = static_cast<unsigned>(std::strlen(pBody));
 		if (*pLength < nLen) return HTTPInternalServerError;
@@ -2095,9 +2173,13 @@ THTTPStatus CWebDaemon::BuildSequencerPage(u8* pBuffer, unsigned* pLength, const
 		// Transport section
 		HTML += "<section><h2>Transport</h2>";
 		HTML += "<div style='display:flex;gap:8px;flex-wrap:wrap;'>";
-		HTML += "<button class='primary' onclick='doPlay()'>&#9654; Play</button>";
-		HTML += "<button class='danger' onclick='doStop()'>&#9646;&#9646; Stop</button>";
+		HTML += "<button onclick='doPrev()' title='Previous file'>&#9664;&#9664;</button>";
+		HTML += "<button class='primary' id='play-btn' onclick='doPlay()'>&#9654; Play</button>";
+		HTML += "<button id='pause-btn' onclick='doPauseResume()' style='display:none;'>&#9646;&#9646; Pause</button>";
+		HTML += "<button class='danger' onclick='doStop()'>&#9646; Stop</button>";
+		HTML += "<button onclick='doNext()' title='Next file'>&#9654;&#9654;</button>";
 		HTML += "<button id='seq-loop-btn' onclick='toggleLoop()' title='Loop: OFF'>&#8635; Loop</button>";
+		HTML += "<button id='seq-autonext-btn' onclick='toggleAutoNext()' title='Auto-next: OFF'>&#9658;&#9658; Auto-next</button>";
 		HTML += "</div>";
 		HTML += "<div class='tmr'>";
 		HTML += "<span class='lbl'>Tempo</span>";
@@ -2128,11 +2210,18 @@ THTTPStatus CWebDaemon::BuildSequencerPage(u8* pBuffer, unsigned* pLength, const
 		// applyStatus
 		HTML += "function applyStatus(d){if(!d)return;_ls=d;";
 		HTML += "var b=document.getElementById('seq-badge');";
-		HTML += "var st=d.playing?'playing':(d.finished?'finished':'stopped');";
-		HTML += "b.textContent=st==='playing'?'Playing':(st==='finished'?'Finished':'Stopped');";
+		HTML += "var st=d.paused?'paused':(d.playing?'playing':(d.finished?'finished':'stopped'));";
+		HTML += "b.textContent=st==='playing'?'Playing':(st==='paused'?'Paused':(st==='finished'?'Finished':'Stopped'));";
 		HTML += "b.className='badge'+(st==='playing'?' playing':(st==='finished'?' finished':''));";
 		HTML += "var fn=(d.file||'').replace(/^(SD:|USB:)/,'');";
 		HTML += "document.getElementById('seq-cur-file').textContent=fn||'\\u2014';";
+		// Pause/Resume button visibility
+		HTML += "var pb=document.getElementById('pause-btn'),plb=document.getElementById('play-btn');";
+		HTML += "if(pb&&plb){if(st==='playing'){pb.style.display='';pb.textContent='\\u23F8 Pause';}";
+		HTML += "else if(st==='paused'){pb.style.display='';pb.textContent='\\u25B6 Resume';}";
+		HTML += "else{pb.style.display='none';}}";
+		HTML += "var autob=document.getElementById('seq-autonext-btn');";
+		HTML += "if(autob){autob.className=d.auto_next?'loop-on':'';autob.title=d.auto_next?'Auto-next: ON':'Auto-next: OFF';}";
 		// Sync bar from server data
 		HTML += "var dur=d.duration_ms>0?d.duration_ms:1;";
 		HTML += "var elp=st==='finished'?dur:(d.elapsed_ms||0);";
@@ -2190,8 +2279,14 @@ THTTPStatus CWebDaemon::BuildSequencerPage(u8* pBuffer, unsigned* pLength, const
 		HTML += "document.getElementById('msg').textContent='';";
 		HTML += "_qs('/api/sequencer/play','file='+encodeURIComponent(f),function(j){document.getElementById('msg').textContent=j&&j.ok?'':'Error.';});}";
 		HTML += "function doStop(){_qs('/api/sequencer/stop','',function(){document.getElementById('msg').textContent='';});}";
+		HTML += "function doPauseResume(){var st=_ls&&_ls.paused;";
+		HTML += "_qs(st?'/api/sequencer/resume':'/api/sequencer/pause','',function(){});}";
+		HTML += "function doNext(){_qs('/api/sequencer/next','',function(){});}";
+		HTML += "function doPrev(){_qs('/api/sequencer/prev','',function(){});}";
 		HTML += "function toggleLoop(){var lb=document.getElementById('seq-loop-btn');var lc=lb&&lb.className==='loop-on';";
 		HTML += "_qs('/api/sequencer/loop','enabled='+(lc?'off':'on'),function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);});});}";
+		HTML += "function toggleAutoNext(){var ab=document.getElementById('seq-autonext-btn');var ac=ab&&ab.className==='loop-on';";
+		HTML += "_qs('/api/sequencer/autonext','enabled='+(ac?'off':'on'),function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);});});}";
 		HTML += "loadFiles();schedPoll();";
 		HTML += "</script></main></body></html>";
 

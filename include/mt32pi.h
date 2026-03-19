@@ -192,7 +192,9 @@ public:
 	struct TSequencerStatus
 	{
 		bool        bPlaying;
+		bool        bPaused;     // true if paused (stopped at a saved tick)
 		bool        bLoopEnabled;
+		bool        bAutoNext;   // true if auto-advance to next file is enabled
 		bool        bFinished;   // true when song ended naturally (loop=off)
 		const char* pFile;       // points to internal buffer; valid until next call
 		u32         nEventCount;
@@ -209,7 +211,12 @@ public:
 
 	void             SequencerPlayFile(const char* pPath);
 	void             SequencerStop();
+	bool             SequencerPause();         // save position and stop
+	bool             SequencerResume();        // replay from saved pause position
+	void             SequencerNext();          // advance to next MIDI file alphabetically
+	void             SequencerPrev();          // go to previous MIDI file
 	void             SetSequencerLoop(bool bLoop);
+	void             SetSequencerAutoNext(bool bEnabled);
 	TSequencerStatus GetSequencerStatus() const;
 	void             GetMIDIFileListJSON(CString& outJSON) const;
 	void             SendRawMIDI(const u8* pData, size_t nSize);
@@ -457,6 +464,17 @@ private:
 	u32     m_nSeqEventCount;            // event count, set after LoadFromFile
 	u32     m_nSeqFileSizeKB;            // file size in KB, set after LoadFromFile
 	char             m_szSeqCurrentFile[SeqPathMax]; // Core 0 writes after LoadFromFile
+
+	// Pause state
+	bool             m_bSeqPaused;              // currently paused at m_nSeqPausedTick
+	int              m_nSeqPausedTick;          // tick position at pause
+	char             m_szSeqPausedFile[SeqPathMax]; // file path at pause
+
+	// Auto-next
+	bool             m_bSeqAutoNext;            // advance to next file when song ends
+
+	bool GetAdjacentMIDIFile(const char* pCurrentPath, int nDirection,
+	                         char* pOutPath, size_t nMaxLen) const;
 
 	// Active note snapshot (written by OnShortMessage on Core 0 task context)
 	u8 m_activeNotes[16][128];   // value = EMidiSource (0 = off)
