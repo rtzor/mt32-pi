@@ -2,7 +2,7 @@
 # tests/Makefile
 #
 # Builds and runs host-side unit tests for mt32-pi.
-# Uses doctest (header-only) — no dependencies beyond g++.
+# Uses doctest (header-only) -- no dependencies beyond g++.
 #
 # Usage:
 #   make            # build
@@ -11,19 +11,26 @@
 #
 
 CXX       = g++
+CC        = gcc
 CXXFLAGS  = -std=c++17 -Wall -Wextra -Wno-unused-parameter -g -O0
-CXXFLAGS += -I. -Istubs -Idoctest -I../include -DUNIT_TEST
+CXXFLAGS += -I. -Istubs -Idoctest -I../include -I../external/inih -DUNIT_TEST
+CFLAGS    = -std=c99 -I../external/inih
 
-# Source files — add new test_*.cpp here
+# C++ source files -- add new test_*.cpp here
 SRCS      = test_main.cpp \
             test_midirouter.cpp \
             ../src/midirouter.cpp \
             test_audiomixer.cpp \
             ../src/audiomixer.cpp \
             test_midiparser.cpp \
-            ../src/midiparser.cpp
+            ../src/midiparser.cpp \
+            test_config_parse.cpp
+
+# C source files (inih)
+CFILES    = ../external/inih/ini.c
 
 OBJS      = $(SRCS:.cpp=.o)
+COBJS     = $(CFILES:.c=.o)
 TARGET    = run_tests
 
 .PHONY: all run clean
@@ -34,11 +41,14 @@ all: $(TARGET)
 run: $(TARGET)
 	./$(TARGET)
 
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) $(COBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
+%.o: %.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(COBJS) $(TARGET)
