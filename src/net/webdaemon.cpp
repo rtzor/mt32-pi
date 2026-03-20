@@ -808,7 +808,17 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 	const bool bIsRouterLoadPath    = strcmp(pPath, "/api/router/load") == 0;
 	const bool bIsSFInfoPath        = strcmp(pPath, "/api/soundfont/info") == 0;
 	const bool bIsRecStartPath      = strcmp(pPath, "/api/recorder/start") == 0;
-	const bool bIsRecStopPath       = strcmp(pPath, "/api/recorder/stop") == 0;
+	const bool bIsRecStopPath       = strcmp(pPath, "/api/recorder/stop")  == 0;
+	const bool bIsPlListPath    = strcmp(pPath, "/api/playlist")         == 0;
+	const bool bIsPlAddPath     = strcmp(pPath, "/api/playlist/add")     == 0;
+	const bool bIsPlRemovePath  = strcmp(pPath, "/api/playlist/remove")  == 0;
+	const bool bIsPlClearPath   = strcmp(pPath, "/api/playlist/clear")   == 0;
+	const bool bIsPlUpPath      = strcmp(pPath, "/api/playlist/up")      == 0;
+	const bool bIsPlDownPath    = strcmp(pPath, "/api/playlist/down")    == 0;
+	const bool bIsPlShufflePath = strcmp(pPath, "/api/playlist/shuffle") == 0;
+	const bool bIsPlRepeatPath  = strcmp(pPath, "/api/playlist/repeat")  == 0;
+	const bool bIsPlPlayPath    = strcmp(pPath, "/api/playlist/play")    == 0;
+	const bool bIsPlAddAllPath  = strcmp(pPath, "/api/playlist/add-all") == 0;
 
 	// ---- GET /api/sequencer/status ----
 	if (bIsSeqStatusPath)
@@ -2297,6 +2307,163 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		return HTTPOK;
 	}
 
+	// ---- GET /api/playlist ----
+	if (bIsPlListPath)
+	{
+		CString JSON;
+		m_pMT32Pi->GetPlaylistJSON(JSON);
+		const unsigned nLen = JSON.GetLength();
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(JSON), nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/playlist/add ----
+	if (bIsPlAddPath)
+	{
+		char FileVal[256] = {};
+		if (pFormData && *pFormData)
+			GetFormValue(pFormData, "file", FileVal, sizeof(FileVal));
+		m_pMT32Pi->PlaylistAdd(FileVal);
+		constexpr const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(__builtin_strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/playlist/add-all ----
+	if (bIsPlAddAllPath)
+	{
+		m_pMT32Pi->PlaylistAddAll();
+		constexpr const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(__builtin_strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/playlist/remove ----
+	if (bIsPlRemovePath)
+	{
+		char IdxVal[8] = {};
+		unsigned nIndex = 0;
+		if (pFormData && *pFormData && GetFormValue(pFormData, "index", IdxVal, sizeof(IdxVal)))
+			nIndex = static_cast<unsigned>(atoi(IdxVal));
+		m_pMT32Pi->PlaylistRemove(nIndex);
+		constexpr const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(__builtin_strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/playlist/clear ----
+	if (bIsPlClearPath)
+	{
+		m_pMT32Pi->PlaylistClear();
+		constexpr const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(__builtin_strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/playlist/up ----
+	if (bIsPlUpPath)
+	{
+		char IdxVal[8] = {};
+		unsigned nIndex = 0;
+		if (pFormData && *pFormData && GetFormValue(pFormData, "index", IdxVal, sizeof(IdxVal)))
+			nIndex = static_cast<unsigned>(atoi(IdxVal));
+		const bool bOk = m_pMT32Pi->PlaylistMoveUp(nIndex);
+		CString JSON;
+		JSON.Format("{\"ok\":%s}", bOk ? "true" : "false");
+		const unsigned nLen = JSON.GetLength();
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(JSON), nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/playlist/down ----
+	if (bIsPlDownPath)
+	{
+		char IdxVal[8] = {};
+		unsigned nIndex = 0;
+		if (pFormData && *pFormData && GetFormValue(pFormData, "index", IdxVal, sizeof(IdxVal)))
+			nIndex = static_cast<unsigned>(atoi(IdxVal));
+		const bool bOk = m_pMT32Pi->PlaylistMoveDown(nIndex);
+		CString JSON;
+		JSON.Format("{\"ok\":%s}", bOk ? "true" : "false");
+		const unsigned nLen = JSON.GetLength();
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(JSON), nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/playlist/shuffle ----
+	if (bIsPlShufflePath)
+	{
+		char OnVal[8] = {};
+		if (pFormData && *pFormData)
+			GetFormValue(pFormData, "enabled", OnVal, sizeof(OnVal));
+		m_pMT32Pi->PlaylistSetShuffle(strcmp(OnVal, "on") == 0);
+		constexpr const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(__builtin_strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/playlist/repeat ----
+	if (bIsPlRepeatPath)
+	{
+		char OnVal[8] = {};
+		if (pFormData && *pFormData)
+			GetFormValue(pFormData, "enabled", OnVal, sizeof(OnVal));
+		m_pMT32Pi->PlaylistSetRepeat(strcmp(OnVal, "on") == 0);
+		constexpr const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(__builtin_strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/playlist/play ----
+	if (bIsPlPlayPath)
+	{
+		char IdxVal[8] = {};
+		unsigned nIndex = 0;
+		if (pFormData && *pFormData && GetFormValue(pFormData, "index", IdxVal, sizeof(IdxVal)))
+			nIndex = static_cast<unsigned>(atoi(IdxVal));
+		m_pMT32Pi->PlaylistPlay(nIndex);
+		constexpr const char* pBody = "{\"ok\":true}";
+		const unsigned nLen = static_cast<unsigned>(__builtin_strlen(pBody));
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
 	return HTTPNotFound;
 }
 
@@ -2467,12 +2634,22 @@ THTTPStatus CWebDaemon::BuildSequencerPage(u8* pBuffer, unsigned* pLength, const
 		HTML += "<section><h2>File</h2><div class='grid'>";
 		HTML += "<label>MIDI file<select id='seq-file'><option value=''>Loading...</option></select></label></div>";
 		HTML += "<div style='margin-top:10px;'><button onclick='loadFiles()' style='font-size:12px;'>&#8635; Refresh list</button></div></section>";
-
-
+		// Playlist section
+		HTML += "<section><h2>Playlist <span id='pl-count' style='font-size:12px;color:#64748b;'></span></h2>";
+		HTML += "<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;'>";
+		HTML += "<button id='pl-shuffle-btn' onclick='togglePlShuffle()' title='Shuffle: OFF'>&#128256; Shuffle</button>";
+		HTML += "<button id='pl-repeat-btn'  onclick='togglePlRepeat()'  title='Repeat: OFF'>&#8635; Repeat</button>";
+		HTML += "<button class='primary' onclick='plAdd()'>+ Add to queue</button>";
+		HTML += "<button onclick='plAddAll()'>+ Add all files</button>";
+		HTML += "<button class='danger'  onclick='plClear()'>&#10006; Clear</button>";
+		HTML += "</div>";
+		HTML += "<div id='pl-list'><em style='color:#64748b;'>Queue empty</em></div>";
+		HTML += "</section>";
 		HTML += "<script>";
 		// State variables
 		HTML += "var _wsOk=false,_ls={},_ct=1.0;";
 		HTML += "var _lElp=0,_lDur=1,_lTime=0,_interp=null;";
+		HTML += "var _plCnt=-1,_plShuffle=false,_plRepeat=false;";
 		// Progress bar update helpers
 		HTML += "function _updBar(elp,dur){";
 		HTML += "document.getElementById('prog').style.width=Math.min(100,elp/dur*100).toFixed(1)+'%';";
@@ -2517,7 +2694,15 @@ THTTPStatus CWebDaemon::BuildSequencerPage(u8* pBuffer, unsigned* pLength, const
 		HTML += "document.getElementById('seq-tick').textContent=tt>0?(ct+' / '+tt):'\\u2014';";
 		HTML += "var sz=d.file_size_kb||0;document.getElementById('seq-size').textContent=sz>0?sz:'\\u2014';";
 		HTML += "var lb=document.getElementById('seq-loop-btn');";
-		HTML += "if(lb){lb.className=d.loop_enabled?'loop-on':'';lb.title=d.loop_enabled?'Loop: ON':'Loop: OFF';}}";
+		HTML += "if(lb){lb.className=d.loop_enabled?'loop-on':'';lb.title=d.loop_enabled?'Loop: ON':'Loop: OFF';}";
+		// Playlist state update from WebSocket
+		HTML += "if(typeof d.pl_count!=='undefined'){";
+		HTML += "var pc=document.getElementById('pl-count');if(pc)pc.textContent=d.pl_count>0?'('+d.pl_count+' tracks)':'';";
+		HTML += "if(d.pl_count!==_plCnt){_plCnt=d.pl_count;loadPlaylist();}";
+		HTML += "else{var rows=document.querySelectorAll('#pl-list tr');rows.forEach(function(r,i){r.style.background=i===d.pl_idx?'#0f2744':'';r.style.borderLeft=i===d.pl_idx?'3px solid #1d4ed8':'none';});}";
+		HTML += "var sb=document.getElementById('pl-shuffle-btn');if(sb){sb.className=d.pl_shuffle?'loop-on':'';sb.title=d.pl_shuffle?'Shuffle: ON':'Shuffle: OFF';}";
+		HTML += "var rb=document.getElementById('pl-repeat-btn');if(rb){rb.className=d.pl_repeat?'loop-on':'';rb.title=d.pl_repeat?'Repeat: ON':'Repeat: OFF';}}";
+		HTML += "}"; // close applyStatus
 		// Poll fallback
 		HTML += "function schedPoll(){if(_wsOk)return;setTimeout(function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);if(!_wsOk)schedPoll();});},1000);}";
 		// WebSocket
@@ -2561,7 +2746,38 @@ THTTPStatus CWebDaemon::BuildSequencerPage(u8* pBuffer, unsigned* pLength, const
 		HTML += "_qs('/api/sequencer/loop','enabled='+(lc?'off':'on'),function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);});});}";
 		HTML += "function toggleAutoNext(){var ab=document.getElementById('seq-autonext-btn');var ac=ab&&ab.className==='loop-on';";
 		HTML += "_qs('/api/sequencer/autonext','enabled='+(ac?'off':'on'),function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);});});}";
-		HTML += "loadFiles();schedPoll();";
+		// Playlist functions
+		HTML += "function loadPlaylist(){_qs('/api/playlist','',function(d){";
+		HTML += "if(!d)return;_plCnt=d.count;_plShuffle=d.shuffle;_plRepeat=d.repeat;";
+		HTML += "var pc=document.getElementById('pl-count');if(pc)pc.textContent=d.count>0?'('+d.count+' tracks)':'';";
+		HTML += "var sb=document.getElementById('pl-shuffle-btn');if(sb){sb.className=d.shuffle?'loop-on':'';sb.title=d.shuffle?'Shuffle: ON':'Shuffle: OFF';}";
+		HTML += "var rb=document.getElementById('pl-repeat-btn');if(rb){rb.className=d.repeat?'loop-on':'';rb.title=d.repeat?'Repeat: ON':'Repeat: OFF';}";
+		HTML += "var el=document.getElementById('pl-list');if(!el)return;";
+		HTML += "if(!d.entries||!d.entries.length){el.innerHTML='<em style=\"color:#64748b;\">Queue empty</em>';return;}";
+		HTML += "var html='<table style=\"width:100%;\">',i;";
+		HTML += "for(i=0;i<d.entries.length;i++){";
+		HTML += "var cur=i===d.index,bg=cur?'background:#0f2744;border-left:3px solid #1d4ed8;':'';";
+		HTML += "var nm=d.entries[i].replace(/^(SD:|USB:)/,'');";
+		HTML += "html+='<tr style=\"'+bg+'\"><td style=\"color:#e2e8f0;font-size:13px;padding:4px 6px;\">'+nm+'</td>';";
+		HTML += "html+='<td style=\"text-align:right;white-space:nowrap;padding:2px;\">'+";
+		HTML += "'<button onclick=\"plPlay('+i+')\"> &#9654;</button> '+";
+		HTML += "'<button onclick=\"plUp('+i+')\">&#8593;</button> '+";
+		HTML += "'<button onclick=\"plDown('+i+')\">&#8595;</button> '+";
+		HTML += "'<button onclick=\"plRemove('+i+')\" class=\"warn\">&#215;</button>'+";
+		HTML += "'</td></tr>';}";
+		HTML += "html+='</table>';el.innerHTML=html;});}";
+		HTML += "function plAdd(){var f=document.getElementById('seq-file').value;";
+		HTML += "if(!f){showToast('Select a file first.',false);return;}";
+		HTML += "_qs('/api/playlist/add','file='+encodeURIComponent(f),function(){loadPlaylist();});}";
+		HTML += "function plAddAll(){_qs('/api/playlist/add-all','',function(){loadPlaylist();});}";
+		HTML += "function plClear(){_qs('/api/playlist/clear','',function(){loadPlaylist();});}";
+		HTML += "function plRemove(i){_qs('/api/playlist/remove','index='+i,function(){loadPlaylist();});}";
+		HTML += "function plUp(i){_qs('/api/playlist/up','index='+i,function(){loadPlaylist();});}";
+		HTML += "function plDown(i){_qs('/api/playlist/down','index='+i,function(){loadPlaylist();});}";
+		HTML += "function plPlay(i){_qs('/api/playlist/play','index='+i,function(){});}";
+		HTML += "function togglePlShuffle(){_qs('/api/playlist/shuffle','enabled='+(_plShuffle?'off':'on'),function(){loadPlaylist();});}";
+		HTML += "function togglePlRepeat(){_qs('/api/playlist/repeat','enabled='+(_plRepeat?'off':'on'),function(){loadPlaylist();});}";
+		HTML += "loadPlaylist();loadFiles();schedPoll();";
 		HTML += "</script></main></body></html>";
 
 		const unsigned nBodyLength = HTML.GetLength();

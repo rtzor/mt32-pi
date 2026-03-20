@@ -29,6 +29,8 @@ SRCS      = test_main.cpp \
             test_fluidsequencer.cpp \
             ../src/fluidsequencer.cpp \
             ../src/midirecorder.cpp \
+            test_playlist.cpp \
+            ../src/playlist.cpp \
             stubs/fluidsynth_stub.cpp \
             stubs/fatfs_stub.cpp
 

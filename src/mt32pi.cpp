@@ -1052,6 +1052,12 @@ CMT32Pi::TSystemState CMT32Pi::GetSystemState() const
 	// Recorder
 	s.bMidiRecording = m_MidiRecorder.IsRecording();
 
+	// Playlist
+	s.nPlaylistCount   = m_Playlist.GetCount();
+	s.nPlaylistIndex   = m_Playlist.GetCurrentIndex();
+	s.bPlaylistRepeat  = m_Playlist.GetRepeat();
+	s.bPlaylistShuffle = m_Playlist.GetShuffle();
+
 	return s;
 }
 
@@ -1414,6 +1420,9 @@ void CMT32Pi::SequencerPlayFile(const char* pPath)
 	const char* pBaseName = strrchr(pPath, '/');
 	pBaseName = pBaseName ? pBaseName + 1 : pPath;
 	LCDLog(TLCDLogType::Notice, "[SEQ] %s", pBaseName);
+
+	// Sync playlist current index if this file is in the queue
+	m_Playlist.SetCurrentByPath(pPath);
 }
 
 void CMT32Pi::SequencerStop()
@@ -1596,6 +1605,12 @@ bool CMT32Pi::GetAdjacentMIDIFile(const char* pCurrentPath, int nDirection,
 
 void CMT32Pi::SequencerNext()
 {
+	if (!m_Playlist.IsEmpty())
+	{
+		if (m_Playlist.AdvanceToNext())
+			SequencerPlayFile(m_Playlist.GetCurrent());
+		return;
+	}
 	char szNext[SeqPathMax];
 	if (GetAdjacentMIDIFile(m_szSeqCurrentFile, +1, szNext, SeqPathMax))
 		SequencerPlayFile(szNext);
@@ -1603,6 +1618,12 @@ void CMT32Pi::SequencerNext()
 
 void CMT32Pi::SequencerPrev()
 {
+	if (!m_Playlist.IsEmpty())
+	{
+		if (m_Playlist.AdvanceToPrev())
+			SequencerPlayFile(m_Playlist.GetCurrent());
+		return;
+	}
 	char szPrev[SeqPathMax];
 	if (GetAdjacentMIDIFile(m_szSeqCurrentFile, -1, szPrev, SeqPathMax))
 		SequencerPlayFile(szPrev);
@@ -1671,6 +1692,82 @@ void CMT32Pi::GetMIDIFileListJSON(CString& outJSON) const
 	}
 
 	outJSON += "]";
+}
+
+void CMT32Pi::PlaylistAdd(const char* pPath)
+{
+	m_Playlist.Add(pPath);
+}
+
+void CMT32Pi::PlaylistRemove(unsigned nIndex)
+{
+	m_Playlist.Remove(nIndex);
+}
+
+bool CMT32Pi::PlaylistMoveUp(unsigned nIndex)
+{
+	return m_Playlist.MoveUp(nIndex);
+}
+
+bool CMT32Pi::PlaylistMoveDown(unsigned nIndex)
+{
+	return m_Playlist.MoveDown(nIndex);
+}
+
+void CMT32Pi::PlaylistClear()
+{
+	m_Playlist.Clear();
+}
+
+void CMT32Pi::PlaylistSetShuffle(bool bShuffle)
+{
+	m_Playlist.SetShuffle(bShuffle);
+}
+
+void CMT32Pi::PlaylistSetRepeat(bool bRepeat)
+{
+	m_Playlist.SetRepeat(bRepeat);
+}
+
+void CMT32Pi::PlaylistPlay(unsigned nIndex)
+{
+	const char* pPath = m_Playlist.GetEntry(nIndex);
+	if (pPath && pPath[0])
+		SequencerPlayFile(pPath);
+}
+
+void CMT32Pi::PlaylistAddAll()
+{
+	const char* const Dirs[] = { "SD:", "USB:" };
+	for (const char* pDir : Dirs)
+	{
+		DIR dir;
+		if (f_opendir(&dir, pDir) != FR_OK)
+			continue;
+
+		FILINFO fi;
+		while (f_readdir(&dir, &fi) == FR_OK && fi.fname[0])
+		{
+			const size_t nLen = strlen(fi.fname);
+			if (nLen < 5)
+				continue;
+			const char* pExt = fi.fname + nLen - 4;
+			if (strcasecmp(pExt, ".mid") != 0 && strcasecmp(pExt, ".midi") != 0)
+				continue;
+
+			char szFull[SeqPathMax];
+			snprintf(szFull, sizeof(szFull), "%s/%s", pDir, fi.fname);
+			m_Playlist.Add(szFull);
+		}
+		f_closedir(&dir);
+	}
+}
+
+void CMT32Pi::GetPlaylistJSON(CString& outJSON) const
+{
+	char buf[12288];
+	const int n = m_Playlist.BuildJSON(buf, sizeof(buf));
+	outJSON = (n > 0) ? buf : "{}";
 }
 
 void CMT32Pi::Run(unsigned nCore)
@@ -2109,8 +2206,13 @@ void CMT32Pi::UpdateMIDI()
 			m_bSeqFinished  = true;
 			m_bSeqIsPlaying = false;
 
-			// Auto-advance to the next file if enabled
-			if (m_bSeqAutoNext && m_szSeqCurrentFile[0])
+		// Auto-advance: prefer playlist queue, then fall back to directory alphabetical
+			if (!m_Playlist.IsEmpty())
+			{
+				if (m_Playlist.AdvanceToNext())
+					SequencerPlayFile(m_Playlist.GetCurrent());
+			}
+			else if (m_bSeqAutoNext && m_szSeqCurrentFile[0])
 			{
 				char szNext[SeqPathMax];
 				if (GetAdjacentMIDIFile(m_szSeqCurrentFile, +1, szNext, SeqPathMax))

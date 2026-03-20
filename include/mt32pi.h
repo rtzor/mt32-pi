@@ -67,6 +67,7 @@
 #include "midirouter.h"
 #include "midimonitor.h"
 #include "midirecorder.h"
+#include "playlist.h"
 #include "synth/mt32romset.h"
 #include "synth/mt32synth.h"
 #include "synth/soundfontsynth.h"
@@ -247,6 +248,18 @@ public:
 	void             SetSequencerAutoNext(bool bEnabled);
 	TSequencerStatus GetSequencerStatus() const;
 	void             GetMIDIFileListJSON(CString& outJSON) const;
+
+	// Playlist queue management
+	void PlaylistAdd(const char* pPath);
+	void PlaylistRemove(unsigned nIndex);
+	bool PlaylistMoveUp(unsigned nIndex);
+	bool PlaylistMoveDown(unsigned nIndex);
+	void PlaylistClear();
+	void PlaylistSetShuffle(bool bShuffle);
+	void PlaylistSetRepeat(bool bRepeat);
+	void PlaylistPlay(unsigned nIndex);
+	void PlaylistAddAll();
+	void GetPlaylistJSON(CString& outJSON) const;
 	void             SendRawMIDI(const u8* pData, size_t nSize);
 
 	// Advanced sequencer controls (FluidSequencer mode only)
@@ -317,6 +330,12 @@ public:
 
 		// Recorder state
 		bool bMidiRecording;
+
+		// Playlist state
+		unsigned nPlaylistCount;
+		unsigned nPlaylistIndex;
+		bool     bPlaylistRepeat;
+		bool     bPlaylistShuffle;
 	};
 
 	TSystemState GetSystemState() const;
@@ -527,6 +546,9 @@ private:
 
 	// MIDI recorder (Core 0 only)
 	CMidiRecorder m_MidiRecorder;
+
+	// Playlist queue (Core 0 only)
+	CPlaylist m_Playlist;
 
 	// Event handling
 	TEventQueue m_EventQueue;
