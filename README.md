@@ -47,8 +47,73 @@ To those who supported this project in the past, especially whilst I was a strug
 - [MiSTer FPGA integration via user port][MiSTer FPGA].
 - Network MIDI support via [RTP-MIDI] and [raw UDP socket].
 - [Embedded FTP server][FTP server] for remote access to files.
-- A user interface with menu system is _planned_.
-- More advanced MIDI routing is _planned_.
+- Web-based control interface with 5 pages (Status, Sound, Config, Sequencer, Mixer).
+- Advanced MIDI routing: per-channel engine assignment, channel remapping, dual-synth layering, CC filtering.
+
+## 🔀 Extended Edition Features
+
+This fork adds a full web-based control interface, a dual-engine MIDI mixer/router system, a built-in MIDI file sequencer, and real-time audio/MIDI monitoring on top of the original mt32-pi.
+
+> For the full feature reference see [README2.md](README2.md).
+
+### System architecture
+
+| Core | Responsibility | Cadence |
+|------|---------------|----------|
+| 0 | MIDI polling, parsing, routing, sequencer tick, network, control | Continuous |
+| 1 | LCD / MiSTer status display | ~16 ms |
+| 2 | Audio render (hot path — synth + mixer) | ~11.6 ms (256 frames @ 48 kHz) |
+| 3 | Free | — |
+
+MIDI flow (Core 0):
+```
+Serial/USB/GPIO → parse → CMIDIRouter
+                                  ├─► MT-32 (munt)
+ FluidSequencer tick ──────────────┤
+                                  └─► FluidSynth
+ Web keyboard ──────────────────────► (both, through same router)
+```
+
+### New features summary
+
+| Feature | Description |
+|---------|-------------|
+| **Web UI** | 5-page browser interface: Status, Sound, Config, Sequencer, Mixer |
+| **MIDI Router** | Per-channel routing to MT-32 and/or FluidSynth, with remapping and CC filtering |
+| **Audio Mixer** | Independent volume (0–100%) and pan for each synth engine |
+| **Sequencer** | Built-in SMF Type 0/1 player with loop and auto-next support |
+| **MIDI Monitor** | Real-time 16-channel meters, piano roll, virtual keyboard, SysEx viewer |
+| **WebSocket** | Live status stream on port 8765 for instant UI updates |
+| **Live control** | Change all synth parameters at runtime via web UI or REST API |
+| **Unit tests** | doctest suite covering MIDI router, audio mixer, and MIDI parser |
+
+### Building
+
+```bash
+# Set cross-compiler path (adjust to your toolchain location)
+export PATH="$HOME/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-elf/bin:$PATH"
+
+# Build for Raspberry Pi 3 (64-bit)
+make BOARD=pi3-64 -j$(nproc)
+
+# Deploy via FTP (once the Pi is running)
+curl -T kernel8.img ftp://<pi-ip>/ --user mt32-pi:mt32-pi
+```
+
+### Running the test suite
+
+```bash
+cd tests && make clean && make run
+```
+
+The test suite uses [doctest](https://github.com/doctest/doctest) and covers `CMIDIRouter`, `CAudioMixer`, and `CMIDIParser` (99 tests, ~1 000 assertions). Tests compile natively — no cross-compiler needed.
+
+### Branch conventions
+
+- `main` — stable, always CI-green; never push directly.
+- `feat/<short-name>` — one branch per feature or fix; open a PR to merge.
+
+---
 
 ## ✨ Quick-start guide
 
