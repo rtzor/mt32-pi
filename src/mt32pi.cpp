@@ -958,6 +958,32 @@ void CMT32Pi::GetMIDIChannelLevels(float* pOutLevels, float* pOutPeaks) const
 	pSynth->m_Lock.Release();
 }
 
+unsigned CMT32Pi::GetMIDIEventLog(CMIDIMonitor::TEventEntry* pOut, unsigned nMax) const
+{
+	if (!m_pCurrentSynth || !pOut || nMax == 0)
+		return 0;
+	return m_pCurrentSynth->m_MIDIMonitor.GetEvents(pOut, nMax);
+}
+
+void CMT32Pi::ClearMIDIEventLog()
+{
+	if (m_pCurrentSynth)
+		m_pCurrentSynth->m_MIDIMonitor.ClearEvents();
+}
+
+unsigned CMT32Pi::GetSysExLog(CMIDIMonitor::TSysExEntry* pOut, unsigned nMax) const
+{
+	if (!m_pCurrentSynth || !pOut || nMax == 0)
+		return 0;
+	return m_pCurrentSynth->m_MIDIMonitor.GetSysExEvents(pOut, nMax);
+}
+
+void CMT32Pi::ClearSysExLog()
+{
+	if (m_pCurrentSynth)
+		m_pCurrentSynth->m_MIDIMonitor.ClearSysExEvents();
+}
+
 void CMT32Pi::GetActiveNotes(u8 out[16][128]) const
 {
 	memcpy(out, m_activeNotes, sizeof(m_activeNotes));
@@ -1655,6 +1681,10 @@ void CMT32Pi::OnSysExMessage(const u8* pData, size_t nSize)
 {
 	// Flash LED
 	LEDOn();
+
+	// Log to MIDI monitor
+	if (m_pCurrentSynth)
+		m_pCurrentSynth->m_MIDIMonitor.LogSysEx(pData, static_cast<unsigned>(nSize));
 
 	// If we don't consume the SysEx message, forward it to the synthesizer
 	if (!ParseCustomSysEx(pData, nSize))

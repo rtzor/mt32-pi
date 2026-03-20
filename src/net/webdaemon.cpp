@@ -758,6 +758,8 @@ THTTPStatus CWebDaemon::GetContent(const char* pPath,
 		return BuildSequencerPage(pBuffer, pLength, ppContentType);
 	if (!strcmp(pPath, "/mixer"))
 		return BuildMixerPage(pBuffer, pLength, ppContentType);
+	if (!strcmp(pPath, "/monitor"))
+		return BuildMonitorPage(pBuffer, pLength, ppContentType);
 	if (!strcmp(pPath, "/config"))
 		return BuildConfigPage(pBuffer, pLength, ppContentType);
 
@@ -795,6 +797,8 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 	const bool bIsSeqTempoPath      = strcmp(pPath, "/api/sequencer/tempo") == 0;
 	const bool bIsMidiNotePath      = strcmp(pPath, "/api/midi/note")        == 0;
 	const bool bIsMidiRawPath       = strcmp(pPath, "/api/midi/raw")         == 0;
+	const bool bIsMidiLogPath       = strcmp(pPath, "/api/midi/log")         == 0;
+	const bool bIsMidiLogClearPath  = strcmp(pPath, "/api/midi/log/clear")   == 0;
 	const bool bIsWifiReadPath      = strcmp(pPath, "/api/wifi/read") == 0;
 	const bool bIsWifiSavePath      = strcmp(pPath, "/api/wifi/save") == 0;
 	const bool bIsMixerStatusPath   = strcmp(pPath, "/api/mixer/status") == 0;
@@ -1054,6 +1058,131 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		const unsigned nLen = static_cast<unsigned>(std::strlen(pBody));
 		if (*pLength < nLen) return HTTPInternalServerError;
 		memcpy(pBuffer, pBody, nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- GET /api/midi/log ----
+	if (bIsMidiLogPath)
+	{
+		static constexpr unsigned MaxLog   = CMIDIMonitor::EventLogSize;
+		static constexpr unsigned MaxSxLog = CMIDIMonitor::SysExLogSize;
+		CMIDIMonitor::TEventEntry  Events[MaxLog];
+		CMIDIMonitor::TSysExEntry  SysExEvents[MaxSxLog];
+		const unsigned nCount   = m_pMT32Pi->GetMIDIEventLog(Events, MaxLog);
+		const unsigned nSxCount = m_pMT32Pi->GetSysExLog(SysExEvents, MaxSxLog);
+
+		CString JSON;
+		JSON += "{\"events\":[";
+		bool bFirst = true;
+
+		for (unsigned i = 0; i < nCount; ++i)
+		{
+			if (!bFirst) JSON += ",";
+			bFirst = false;
+			const u32 msg     = Events[i].nRawMessage;
+			const u8 nStatus  = msg & 0xF0;
+			const u8 nChannel = msg & 0x0F;
+			const u8 nData1   = (msg >> 8)  & 0x7F;
+			const u8 nData2   = (msg >> 16) & 0x7F;
+
+			const char* pType = "Unknown";
+			switch (nStatus)
+			{
+				case 0x80: pType = "Note Off";    break;
+				case 0x90: pType = (nData2 > 0) ? "Note On" : "Note Off"; break;
+				case 0xA0: pType = "Aftertouch";  break;
+				case 0xB0: pType = "CC";          break;
+				case 0xC0: pType = "Prog Change"; break;
+				case 0xD0: pType = "Chan Press";  break;
+				case 0xE0: pType = "Pitch Bend";  break;
+				default:   pType = "RT";          break;
+			}
+
+			JSON += "{";
+			CString Tmp;
+			Tmp.Format("%u", Events[i].nTimestampMs);
+			AppendJSONPair(JSON, "ts", static_cast<const char*>(Tmp));
+			Tmp.Format("%u", static_cast<unsigned>(nChannel) + 1);
+			AppendJSONPair(JSON, "ch", static_cast<const char*>(Tmp));
+			AppendJSONPair(JSON, "type", pType);
+			Tmp.Format("%u", static_cast<unsigned>(nData1));
+			AppendJSONPair(JSON, "d1", static_cast<const char*>(Tmp));
+			Tmp.Format("%u", static_cast<unsigned>(nData2));
+			AppendJSONPair(JSON, "d2", static_cast<const char*>(Tmp), false);
+			JSON += "}";
+		}
+
+		for (unsigned i = 0; i < nSxCount; ++i)
+		{
+			if (!bFirst) JSON += ",";
+			bFirst = false;
+			const CMIDIMonitor::TSysExEntry& Sx = SysExEvents[i];
+			const u8* p = Sx.nData;
+			const u8  n = Sx.nStoredBytes;
+
+			// Decode known SysEx patterns
+			const char* pDecoded = "Unknown";
+			if (n >= 4 && p[0] == 0xF0)
+			{
+				if (p[1] == 0x7E && n >= 6 && p[3] == 0x09)
+				{
+					if      (p[4] == 0x01) pDecoded = "GM System On";
+					else if (p[4] == 0x02) pDecoded = "GM System Off";
+					else if (p[4] == 0x03) pDecoded = "GM2 System On";
+				}
+				else if (p[1] == 0x7F && n >= 8 && p[3] == 0x04 && p[4] == 0x01)
+					pDecoded = "Master Volume";
+				else if (p[1] == 0x41 && n >= 6 && p[3] == 0x42)
+					pDecoded = (p[4] == 0x12) ? "Roland GS" : "Roland GS Req";
+				else if (p[1] == 0x43)
+					pDecoded = "Yamaha XG";
+				else if (p[1] == 0x7D)
+					pDecoded = "mt32-pi";
+			}
+
+			// Hex preview (first 8 bytes)
+			CString Hex;
+			const u8 nShow = n < 8 ? n : 8;
+			for (u8 b = 0; b < nShow; ++b)
+			{
+				CString Byte;
+				Byte.Format(b > 0 ? " %02X" : "%02X", static_cast<unsigned>(p[b]));
+				Hex += static_cast<const char*>(Byte);
+			}
+			if (Sx.nFullSize > 8) Hex += "..";
+
+			CString Tmp;
+			JSON += "{";
+			Tmp.Format("%u", Sx.nTimestampMs);
+			AppendJSONPair(JSON, "ts", static_cast<const char*>(Tmp));
+			AppendJSONPair(JSON, "ch", "-");
+			AppendJSONPair(JSON, "type", "SysEx");
+			AppendJSONPair(JSON, "d1", static_cast<const char*>(Hex));
+			AppendJSONPair(JSON, "d2", pDecoded, false);
+			JSON += "}";
+		}
+
+		JSON += "]}";
+
+		const unsigned nLen = JSON.GetLength();
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(JSON), nLen);
+		*pLength = nLen;
+		*ppContentType = "application/json; charset=utf-8";
+		return HTTPOK;
+	}
+
+	// ---- POST /api/midi/log/clear ----
+	if (bIsMidiLogClearPath)
+	{
+		m_pMT32Pi->ClearMIDIEventLog();
+		m_pMT32Pi->ClearSysExLog();
+		const char* pResp = "{\"ok\":true}";
+		const unsigned nLen = strlen(pResp);
+		if (*pLength < nLen) return HTTPInternalServerError;
+		memcpy(pBuffer, pResp, nLen);
 		*pLength = nLen;
 		*ppContentType = "application/json; charset=utf-8";
 		return HTTPOK;
@@ -2267,7 +2396,7 @@ THTTPStatus CWebDaemon::BuildSequencerPage(u8* pBuffer, unsigned* pLength, const
 		HTML += "</style></head><body><main>";
 		HTML += "<script src='/app.js'></script>";
 		HTML += "<h1>MIDI Sequencer</h1>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
+		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
 		// Now Playing card
 		HTML += "<div id='np'>";
 		HTML += "<div style='display:flex;align-items:center;gap:10px;'>";
@@ -2423,7 +2552,7 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		HTML += "<script src='/app.js'></script>";
 		HTML += "<h1>MIDI Mixer / Router</h1>";
 		HTML += "<p>Route MIDI channels to engines and remap channel numbers.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
+		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
 
 		// Preset + Enable section
 		HTML += "<section><h2>Mode</h2><div class='grid'>";
@@ -2589,6 +2718,118 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		return HTTPOK;
 }
 
+THTTPStatus CWebDaemon::BuildMonitorPage(u8* pBuffer, unsigned* pLength, const char** ppContentType)
+{
+		CString HTML;
+		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
+		HTML += "<title>mt32-pi monitor</title><link rel='stylesheet' href='/app.css'></head><body><main>";
+		HTML += "<script src='/app.js'></script>";
+		HTML += "<h1>MIDI Monitor</h1>";
+		HTML += "<p>Live log of incoming MIDI events. Shows the last 64 messages received by the active synth.</p>";
+		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
+
+		// Filter controls
+		HTML += "<section><h2>Filters</h2><div class='grid'>";
+		HTML += "<label>Channel<select id='mn-ch'><option value='0'>All channels</option>";
+		for (int i = 1; i <= 16; ++i)
+		{
+			CString Opt; Opt.Format("<option value='%d'>Ch %d</option>", i, i);
+			HTML += static_cast<const char*>(Opt);
+		}
+		HTML += "</select></label>";
+		HTML += "<label>Type<select id='mn-type'>";
+		HTML += "<option value=''>All types</option>";
+		HTML += "<option value='Note On'>Note On</option>";
+		HTML += "<option value='Note Off'>Note Off</option>";
+		HTML += "<option value='CC'>CC</option>";
+		HTML += "<option value='Prog Change'>Prog Change</option>";
+		HTML += "<option value='Pitch Bend'>Pitch Bend</option>";
+		HTML += "<option value='Aftertouch'>Aftertouch</option>";
+		HTML += "<option value='SysEx'>SysEx</option>";
+		HTML += "</select></label>";
+		HTML += "<label style='align-self:end;'><button onclick='clearLog()'>Clear Log</button></label>";
+		HTML += "<label style='align-self:end;'><label><input type='checkbox' id='mn-pause'> Pause</label></label>";
+		HTML += "</div></section>";
+
+		// Event table
+		HTML += "<section><h2>Events <span id='mn-count' style='font-size:12px;color:#64748b;'></span></h2>";
+		HTML += "<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;font-size:12px;font-family:monospace;'><thead><tr>";
+		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;min-width:80px;'>Time (ms)</th>";
+		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Ch</th>";
+		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Type</th>";
+		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Data 1</th>";
+		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Data 2</th>";
+		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Detail</th>";
+		HTML += "</tr></thead><tbody id='mn-body'></tbody></table></div></section>";
+
+		// Note names for display
+		HTML += "<script>";
+		HTML += "var _nn=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];";
+		HTML += "function noteName(n){return _nn[n%12]+(Math.floor(n/12)-1);}";
+
+		// CC name lookup (common ones)
+		HTML += "var _cc={1:'Mod',7:'Vol',10:'Pan',11:'Exp',64:'Sustain',91:'Reverb',93:'Chorus',121:'Reset',123:'All Off'};";
+		HTML += "function ccName(n){return _cc[n]?_cc[n]+' ('+n+')':String(n);}";
+
+		// detail column
+		HTML += "function detail(e){";
+		HTML += "var type=e.type,d1=e.d1,d2=e.d2;";
+		HTML += "if(type==='Note On'||type==='Note Off')return noteName(parseInt(d1))+' vel='+d2;";
+		HTML += "if(type==='CC')return ccName(parseInt(d1))+' val='+d2;";
+		HTML += "if(type==='Prog Change')return 'Prog '+d1;";
+		HTML += "if(type==='Pitch Bend'){var v=(parseInt(d2)<<7|parseInt(d1))-8192;return 'bend='+v;}";
+		HTML += "if(type==='SysEx')return d2;";
+		HTML += "return d1+' '+d2;}";
+
+		// type color
+		HTML += "var _tc={'Note On':'#4ade80','Note Off':'#94a3b8','CC':'#fbbf24','Prog Change':'#c084fc','Pitch Bend':'#38bdf8','Aftertouch':'#fb923c','SysEx':'#a78bfa'};";
+		HTML += "function typeColor(t){return _tc[t]||'#e2e8f0';}";
+
+		// render table
+		HTML += "var _evs=[];";
+		HTML += "function renderTable(){";
+		HTML += "var fch=parseInt(document.getElementById('mn-ch').value,10);";
+		HTML += "var fty=document.getElementById('mn-type').value;";
+		HTML += "var tb=document.getElementById('mn-body');tb.innerHTML='';";
+		HTML += "var shown=0;";
+		HTML += "for(var i=_evs.length-1;i>=0;i--){";  // newest first
+		HTML += "var e=_evs[i];";
+		HTML += "if(fch&&parseInt(e.ch,10)!==fch)continue;";
+		HTML += "if(fty&&e.type!==fty)continue;";
+		HTML += "var tr=document.createElement('tr');";
+		HTML += "tr.style.background=shown%2===0?'#111827':'#0b1220';";
+		HTML += "var cells=[e.ts,e.ch,e.type,e.d1,e.d2,detail(e)];";
+		HTML += "for(var j=0;j<cells.length;j++){var td=document.createElement('td');td.style.padding='4px 8px';td.style.borderBottom='1px solid #1e293b';";
+		HTML += "if(j===2){td.style.color=typeColor(e.type);td.style.fontWeight='bold';}";
+		HTML += "td.textContent=cells[j];tr.appendChild(td);}";
+		HTML += "tb.appendChild(tr);shown++;}";
+		HTML += "document.getElementById('mn-count').textContent='('+shown+' shown, '+_evs.length+' total)';}";
+
+		// fetch log
+		HTML += "function fetchLog(){if(document.getElementById('mn-pause').checked)return;";
+		HTML += "_qs('/api/midi/log','',function(d){if(!d||!d.events)return;_evs=d.events;";
+		HTML += "_evs.sort(function(a,b){return parseInt(a.ts)-parseInt(b.ts);});renderTable();});}";
+
+		// clear
+		HTML += "function clearLog(){_qs('/api/midi/log/clear','',function(){_evs=[];renderTable();});}";
+
+		// filter change re-renders immediately
+		HTML += "document.getElementById('mn-ch').onchange=renderTable;";
+		HTML += "document.getElementById('mn-type').onchange=renderTable;";
+
+		// poll every 500ms
+		HTML += "fetchLog();setInterval(fetchLog,500);";
+		HTML += "</script></main></body></html>";
+
+		const unsigned nLen = HTML.GetLength();
+		if (*pLength < nLen)
+			return HTTPInternalServerError;
+		memcpy(pBuffer, static_cast<const char*>(HTML), nLen);
+		*pLength = nLen;
+		*ppContentType = "text/html; charset=utf-8";
+		return HTTPOK;
+}
+
 THTTPStatus CWebDaemon::BuildSoundPage(u8* pBuffer, unsigned* pLength, const char** ppContentType)
 {
 		CString HTML;
@@ -2641,7 +2882,7 @@ THTTPStatus CWebDaemon::BuildSoundPage(u8* pBuffer, unsigned* pLength, const cha
 		CString SFGain;        SFGain.Format("%.2f",       bHasSoundFontFX ? nSFGain        : 0.0f);
 
 		HTML += "<h1>Sound control</h1><p>Live adjustments for synthesis engines and effects, no restart needed.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
+		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
 		HTML += "<div class='statusbar'><div class='pill'>Active synth: <strong id='rt_active_synth_label'>";
 		AppendEscaped(HTML, m_pMT32Pi->GetActiveSynthName());
 		HTML += "</strong></div><div class='pill'>MT-32 ROM: <strong id='rt_mt32_rom_name'>";
@@ -2877,7 +3118,7 @@ THTTPStatus CWebDaemon::BuildConfigPage(u8* pBuffer, unsigned* pLength, const ch
 		HTML += "<title>mt32-pi config</title><link rel='stylesheet' href='/app.css'></head><body><main>";
 		HTML += "<script src='/app.js'></script>";
 		HTML += "<h1>Configure mt32-pi</h1><p>Saves changes to <code>mt32-pi.cfg</code> and creates a backup <code>mt32-pi.cfg.bak</code>.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
+		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
 		HTML += "<form id='cfgForm'>";
 
 		// ---- [system] ----
@@ -3093,7 +3334,7 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>mt32-pi status</title><link rel='stylesheet' href='/app.css'></head><body><main>";
 	HTML += "<script src='/app.js'></script>";
 	HTML += "<h1>mt32-pi</h1><p>Live status of system, network and synthesizers.</p>";
-	HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a></nav>";
+	HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
 	HTML += "<div class='hero'>";
 	HTML += "<div class='pill'>IP: ";
 		AppendEscaped(HTML, IPAddress);

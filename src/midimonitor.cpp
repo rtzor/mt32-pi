@@ -26,8 +26,18 @@
 
 CMIDIMonitor::CMIDIMonitor()
 	: m_PeakLevels{0.0f},
-	  m_PeakTimes{0}
+	  m_PeakTimes{0},
+	  m_nEventHead(0),
+	  m_nEventCount(0),
+	  m_nSysExHead(0),
+	  m_nSysExCount(0)
 {
+	for (auto& Entry : m_EventLog)
+		Entry = {0, 0};
+
+	for (auto& Entry : m_SysExLog)
+		Entry = {};
+
 	for (auto& Channel : m_State)
 	{
 		for (auto& Note : Channel.Notes)
@@ -53,6 +63,16 @@ void CMIDIMonitor::OnShortMessage(u32 nMessage)
 	TChannelState& ChannelState = m_State[nChannel];
 	TNoteState& NoteState = ChannelState.Notes[nData1];
 	const unsigned int nTicks = CTimer::GetClockTicks();
+
+	// Log all channel messages into the ring buffer
+	{
+		TEventEntry& Entry = m_EventLog[m_nEventHead];
+		Entry.nRawMessage  = nMessage;
+		Entry.nTimestampMs = nTicks / (CLOCKHZ / 1000);
+		m_nEventHead = (m_nEventHead + 1) % EventLogSize;
+		if (m_nEventCount < EventLogSize)
+			++m_nEventCount;
+	}
 
 	switch (nStatus)
 	{
@@ -312,4 +332,62 @@ float CMIDIMonitor::ComputePercussionEnvelope(TNoteState& NoteState) const
 
 	// No decay/sustain for percussion
 	return 1.0f - nNoteOnDurationMillis / ReleaseTimeMillis;
+}
+
+unsigned CMIDIMonitor::GetEvents(TEventEntry* pOut, unsigned nMax) const
+{
+	if (!pOut || nMax == 0 || m_nEventCount == 0)
+		return 0;
+
+	const unsigned nCount = m_nEventCount < nMax ? m_nEventCount : nMax;
+	// Oldest entry position in the ring
+	const unsigned nStart = (m_nEventHead + EventLogSize - m_nEventCount) % EventLogSize;
+	for (unsigned i = 0; i < nCount; ++i)
+		pOut[i] = m_EventLog[(nStart + i) % EventLogSize];
+	return nCount;
+}
+
+void CMIDIMonitor::ClearEvents()
+{
+	m_nEventHead  = 0;
+	m_nEventCount = 0;
+	for (auto& Entry : m_EventLog)
+		Entry = {0, 0};
+}
+
+void CMIDIMonitor::LogSysEx(const u8* pData, unsigned nSize)
+{
+	if (!pData || nSize == 0)
+		return;
+
+	const unsigned int nTimestampMs = CTimer::GetClockTicks() / (CLOCKHZ / 1000);
+	TSysExEntry& Entry = m_SysExLog[m_nSysExHead];
+	Entry.nTimestampMs = nTimestampMs;
+	Entry.nFullSize    = nSize > 0xFFFF ? static_cast<u16>(0xFFFF) : static_cast<u16>(nSize);
+	Entry.nStoredBytes = nSize > MaxSysExPayload ? static_cast<u8>(MaxSysExPayload) : static_cast<u8>(nSize);
+	for (u8 i = 0; i < Entry.nStoredBytes; ++i)
+		Entry.nData[i] = pData[i];
+	m_nSysExHead = (m_nSysExHead + 1) % SysExLogSize;
+	if (m_nSysExCount < SysExLogSize)
+		++m_nSysExCount;
+}
+
+unsigned CMIDIMonitor::GetSysExEvents(TSysExEntry* pOut, unsigned nMax) const
+{
+	if (!pOut || nMax == 0 || m_nSysExCount == 0)
+		return 0;
+
+	const unsigned nCount = m_nSysExCount < nMax ? m_nSysExCount : nMax;
+	const unsigned nStart = (m_nSysExHead + SysExLogSize - m_nSysExCount) % SysExLogSize;
+	for (unsigned i = 0; i < nCount; ++i)
+		pOut[i] = m_SysExLog[(nStart + i) % SysExLogSize];
+	return nCount;
+}
+
+void CMIDIMonitor::ClearSysExEvents()
+{
+	m_nSysExHead  = 0;
+	m_nSysExCount = 0;
+	for (auto& Entry : m_SysExLog)
+		Entry = {};
 }

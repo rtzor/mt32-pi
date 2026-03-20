@@ -65,6 +65,7 @@
 #include "ringbuffer.h"
 #include "audiomixer.h"
 #include "midirouter.h"
+#include "midimonitor.h"
 #include "synth/mt32romset.h"
 #include "synth/mt32synth.h"
 #include "synth/soundfontsynth.h"
@@ -101,6 +102,10 @@ public:
 	                         bool& bChorusActive, float& nChorusDepth, float& nChorusLevel,
 	                         int& nChorusVoices, float& nChorusSpeed, float& nGain) const;
 	void GetMIDIChannelLevels(float* pOutLevels, float* pOutPeaks) const;
+	unsigned GetMIDIEventLog(CMIDIMonitor::TEventEntry* pOut, unsigned nMax) const;
+	void ClearMIDIEventLog();
+	unsigned GetSysExLog(CMIDIMonitor::TSysExEntry* pOut, unsigned nMax) const;
+	void     ClearSysExLog();
 	bool SetActiveSynth(TSynth Synth);
 	bool SetMT32ROMSet(TMT32ROMSet ROMSet);
 	bool SetSoundFontIndex(size_t nIndex);

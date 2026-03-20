@@ -49,6 +49,7 @@ private:
 	THTTPStatus BuildSoundPage(u8* pBuffer, unsigned* pLength, const char** ppContentType);
 	THTTPStatus BuildSequencerPage(u8* pBuffer, unsigned* pLength, const char** ppContentType);
 	THTTPStatus BuildMixerPage(u8* pBuffer, unsigned* pLength, const char** ppContentType);
+	THTTPStatus BuildMonitorPage(u8* pBuffer, unsigned* pLength, const char** ppContentType);
 	THTTPStatus BuildConfigPage(u8* pBuffer, unsigned* pLength, const char** ppContentType);
 
 	// Static assets

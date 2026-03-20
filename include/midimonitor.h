@@ -30,12 +30,40 @@
 class CMIDIMonitor
 {
 public:
+	// ---- Event log (ring buffer for web MIDI monitor) ----
+	static constexpr unsigned EventLogSize    = 64;
+	static constexpr unsigned SysExLogSize    = 16;
+	static constexpr unsigned MaxSysExPayload = 24;
+
+	struct TEventEntry
+	{
+		u32          nRawMessage;   // 0 = empty slot
+		unsigned int nTimestampMs;  // milliseconds from CTimer::GetClockTicks()
+	};
+
+	struct TSysExEntry
+	{
+		unsigned int nTimestampMs;
+		u8           nData[MaxSysExPayload];
+		u16          nFullSize;    // total message length (may exceed MaxSysExPayload)
+		u8           nStoredBytes; // bytes actually stored in nData[]
+	};
+
 	CMIDIMonitor();
 
 	void OnShortMessage(u32 nMessage);
 	void GetChannelLevels(unsigned int nTicks, float* pOutLevels, float* pOutPeaks, u16 nPercussionBitMask = (1 << 9));
 	void AllNotesOff();
 	void ResetControllers(bool bIsResetAllControllers);
+
+	// Copy the last nMax events (oldest→newest) into pOut. Returns count written.
+	unsigned GetEvents(TEventEntry* pOut, unsigned nMax) const;
+	void     ClearEvents();
+
+	// SysEx log
+	void     LogSysEx(const u8* pData, unsigned nSize);
+	unsigned GetSysExEvents(TSysExEntry* pOut, unsigned nMax) const;
+	void     ClearSysExEvents();
 
 private:
 	static constexpr u8 ChannelCount = 16;
@@ -81,6 +109,16 @@ private:
 	TChannelState m_State[ChannelCount];
 	float m_PeakLevels[ChannelCount];
 	unsigned int m_PeakTimes[ChannelCount];
+
+	// Event log ring buffer
+	TEventEntry  m_EventLog[EventLogSize];
+	unsigned     m_nEventHead;  // next write position
+	unsigned     m_nEventCount; // total events in buffer (capped at EventLogSize)
+
+	// SysEx ring buffer
+	TSysExEntry  m_SysExLog[SysExLogSize];
+	unsigned     m_nSysExHead;
+	unsigned     m_nSysExCount;
 };
 
 #endif
