@@ -304,28 +304,30 @@ static void HandleConnection(CSocket* pSock, CMT32Pi* pMT32Pi)
 		unsigned nLastPush = 0;
 		u8 framePay[512];
 		char jsonBuf[2560];  // seq status + 16 channels + notes[] + engine routing
+		char prevJSON[2560]; // last JSON sent; used to skip duplicate frames
+		prevJSON[0] = '\0';
 
 		while (true)
 		{
 			unsigned nNow = CTimer::Get()->GetTicks(); // HZ = 100
 
-			// Push status at ~250ms intervals
+			// Push status at ~250ms intervals, but only if state changed
 			if (nNow - nLastPush >= 25) // 25 ticks × (1/100 s) = 250ms
 			{
 				nLastPush = nNow;
 				int jLen = BuildStatusJSON(jsonBuf, sizeof(jsonBuf), pMT32Pi);
-				if (jLen > 0)
+				if (jLen > 0 && strcmp(jsonBuf, prevJSON) != 0)
 				{
 					int fLen = BuildFrame(txBuf, kTxBuf, 0x01, (u8*)jsonBuf, (size_t)jLen);
 					if (fLen > 0)
 					{
 						if (pSock->Send(txBuf, (unsigned)fLen, MSG_DONTWAIT) < 0)
 							break; // connection closed
+						memcpy(prevJSON, jsonBuf, (size_t)jLen + 1);
 					}
 				}
 			}
 
-			// Read any incoming frame (non-blocking)
 			int n = pSock->Receive(rxBuf, kRxBuf, MSG_DONTWAIT);
 			if (n < 0) break; // connection error/closed
 			if (n > 0)
