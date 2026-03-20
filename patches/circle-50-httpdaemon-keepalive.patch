@@ -1,0 +1,242 @@
+diff --git a/include/circle/net/httpdaemon.h b/include/circle/net/httpdaemon.h
+index f41b62e8..e7d0d8e3 100644
+--- a/include/circle/net/httpdaemon.h
++++ b/include/circle/net/httpdaemon.h
+@@ -88,6 +88,7 @@ private:
+ 
+ 	// from request
+ 	THTTPRequestMethod m_RequestMethod;
++	boolean m_bRequestPersistent;			// request has Connection: keep-alive
+ 
+ 	char m_RequestURI[HTTP_MAX_URI+1];		// the URI without host
+ 	char m_RequestPath[HTTP_MAX_PATH+1];		// the path without parameters
+diff --git a/lib/net/httpdaemon.cpp b/lib/net/httpdaemon.cpp
+index e9a5a458..b5639fe9 100644
+--- a/lib/net/httpdaemon.cpp
++++ b/lib/net/httpdaemon.cpp
+@@ -175,113 +175,105 @@ void CHTTPDaemon::Worker (void)
+ 
+ 	m_pSocket->SetOptionReceiveTimeout (m_nTimeoutSeconds * 1000000);
+ 
+-	// parse HTTP request
+-	THTTPStatus Status = ParseRequest ();
+-	if (Status == HTTPUnknownError)		// unknown error cannot be reported to client
++	while (1)
+ 	{
+-		delete m_pSocket;
+-		m_pSocket = 0;
+-
+-		return;
+-	}
++		// parse HTTP request
++		THTTPStatus Status = ParseRequest ();
++		if (Status == HTTPUnknownError)		// unknown error cannot be reported to client
++			break;
+ 
+-	// process HTTP request
+-	unsigned nContentLength = m_nMaxContentSize;
+-	const char *pContentType = "text/html";
++		// process HTTP request
++		unsigned nContentLength = m_nMaxContentSize;
++		const char *pContentType = "text/html";
+ 
+-	const char *pStatusMsg = "OK";
++		const char *pStatusMsg = "OK";
+ 
+-	if (Status == HTTPOK)
+-	{
+-		// get content
+-		assert (m_pContentBuffer != 0);
+-		Status = GetContent (m_RequestPath, m_RequestParams, m_RequestFormData,
+-				     m_pContentBuffer, &nContentLength, &pContentType);
+-		assert (nContentLength <= m_nMaxContentSize);
+-		assert (pContentType != 0);
+-
+-		delete [] m_pMultipartBuffer;
+-		m_pMultipartBuffer = 0;
+-	}
+-
+-	if (Status != HTTPOK)
+-	{
+-		switch (Status)
++		if (Status == HTTPOK)
+ 		{
+-		case HTTPBadRequest:		pStatusMsg = "Bad Request";			break;
+-		case HTTPNotFound:		pStatusMsg = "Not Found";			break;
+-		case HTTPRequestEntityTooLarge:	pStatusMsg = "Request Entity Too Large";	break;
+-		case HTTPRequestURITooLong:	pStatusMsg = "Request-URI Too Long";		break;
+-		case HTTPInternalServerError:	pStatusMsg = "Internal Server Error";		break;
+-		case HTTPMethodNotImplemented:	pStatusMsg = "Method Not Implemented";		break;
+-		case HTTPVersionNotSupported:	pStatusMsg = "Version Not Supported";		break;
+-		default:			pStatusMsg = "Unknown Error";			break;
++			// get content
++			assert (m_pContentBuffer != 0);
++			Status = GetContent (m_RequestPath, m_RequestParams, m_RequestFormData,
++					     m_pContentBuffer, &nContentLength, &pContentType);
++			assert (nContentLength <= m_nMaxContentSize);
++			assert (pContentType != 0);
++
++			delete [] m_pMultipartBuffer;
++			m_pMultipartBuffer = 0;
+ 		}
+ 
+-		CString ErrorPage;
+-		ErrorPage.Format ("<!DOCTYPE html>\n"
+-				  "<html>\n"
+-				  "<head><title>%u %s</title></head>\n"
+-				  "<body><h1>%s</h1></body>\n"
+-				  "</html>\n", Status, pStatusMsg, pStatusMsg);
+-
+-		nContentLength = ErrorPage.GetLength ();
+-		if (nContentLength > m_nMaxContentSize)
++		if (Status != HTTPOK)
+ 		{
+-			nContentLength = m_nMaxContentSize;
+-		}
+-
+-		assert (m_pContentBuffer != 0);
+-		memcpy (m_pContentBuffer, (const char *) ErrorPage, nContentLength);
+-		pContentType = "text/html";	// may has been changed by GetContent()
+-	}
++			switch (Status)
++			{
++			case HTTPBadRequest:		pStatusMsg = "Bad Request";			break;
++			case HTTPNotFound:		pStatusMsg = "Not Found";			break;
++			case HTTPRequestEntityTooLarge:	pStatusMsg = "Request Entity Too Large";	break;
++			case HTTPRequestURITooLong:	pStatusMsg = "Request-URI Too Long";		break;
++			case HTTPInternalServerError:	pStatusMsg = "Internal Server Error";		break;
++			case HTTPMethodNotImplemented:	pStatusMsg = "Method Not Implemented";		break;
++			case HTTPVersionNotSupported:	pStatusMsg = "Version Not Supported";		break;
++			default:			pStatusMsg = "Unknown Error";			break;
++			}
+ 
+-	// write access log
+-	const u8 *pClientIP = m_pSocket->GetForeignIP ();
+-	if (pClientIP == 0)			// connection closed in the meantime?
+-	{
+-		delete m_pSocket;
+-		m_pSocket = 0;
++			CString ErrorPage;
++			ErrorPage.Format ("<!DOCTYPE html>\n"
++					  "<html>\n"
++					  "<head><title>%u %s</title></head>\n"
++					  "<body><h1>%s</h1></body>\n"
++					  "</html>\n", Status, pStatusMsg, pStatusMsg);
+ 
+-		return;
+-	}
+-	CIPAddress ClientIP (pClientIP);
++			nContentLength = ErrorPage.GetLength ();
++			if (nContentLength > m_nMaxContentSize)
++			{
++				nContentLength = m_nMaxContentSize;
++			}
+ 
+-	WriteAccessLog (ClientIP, m_RequestMethod, m_RequestURI, Status, nContentLength);
++			assert (m_pContentBuffer != 0);
++			memcpy (m_pContentBuffer, (const char *) ErrorPage, nContentLength);
++			pContentType = "text/html";	// may has been changed by GetContent()
++		}
+ 
+-	// send HTTP response header
+-	CString Header;
+-	Header.Format ("HTTP/1.1 %u %s\r\n"
+-		       "Server: " SERVER "\r\n"
+-		       "Content-Type: %s\r\n"
+-		       "Content-Length: %u\r\n"
+-		       "Connection: close\r\n"
+-		       "\r\n", Status, pStatusMsg, pContentType, nContentLength);
++		// write access log
++		const u8 *pClientIP = m_pSocket->GetForeignIP ();
++		if (pClientIP == 0)			// connection closed in the meantime?
++			break;
++		CIPAddress ClientIP (pClientIP);
+ 
+-	if (m_pSocket->Send ((const char *) Header, Header.GetLength (), MSG_DONTWAIT) < 0)
+-	{
+-		CLogger::Get ()->Write (FromHTTPDaemon, LogError, "Cannot send response header");
++		WriteAccessLog (ClientIP, m_RequestMethod, m_RequestURI, Status, nContentLength);
+ 
+-		delete m_pSocket;
+-		m_pSocket = 0;
++		// keep-alive only for successful responses
++		boolean bPersistent = m_bRequestPersistent && (Status == HTTPOK);
+ 
+-		return;
+-	}
++		// send HTTP response header
++		CString Header;
++		Header.Format ("HTTP/1.1 %u %s\r\n"
++			       "Server: " SERVER "\r\n"
++			       "Content-Type: %s\r\n"
++			       "Content-Length: %u\r\n"
++			       "Connection: %s\r\n"
++			       "\r\n", Status, pStatusMsg, pContentType, nContentLength,
++			       bPersistent ? "keep-alive" : "close");
+ 
+-	// send response
+-	if (   m_RequestMethod != HTTPRequestMethodHead
+-	    && nContentLength > 0)
+-	{
+-		assert (m_pContentBuffer != 0);
+-		if (m_pSocket->Send (m_pContentBuffer, nContentLength, MSG_DONTWAIT) < 0)
++		if (m_pSocket->Send ((const char *) Header, Header.GetLength (), MSG_DONTWAIT) < 0)
+ 		{
+-			CLogger::Get ()->Write (FromHTTPDaemon, LogError, "Cannot send response");
+-
+-			delete m_pSocket;
+-			m_pSocket = 0;
++			CLogger::Get ()->Write (FromHTTPDaemon, LogError, "Cannot send response header");
++			break;
++		}
+ 
+-			return;
++		// send response
++		if (   m_RequestMethod != HTTPRequestMethodHead
++		    && nContentLength > 0)
++		{
++			assert (m_pContentBuffer != 0);
++			if (m_pSocket->Send (m_pContentBuffer, nContentLength, MSG_DONTWAIT) < 0)
++			{
++				CLogger::Get ()->Write (FromHTTPDaemon, LogError, "Cannot send response");
++				break;
++			}
+ 		}
++
++		if (!bPersistent)
++			break;
+ 	}
+ 
+ 	delete m_pSocket;		// closes connection
+@@ -293,6 +285,7 @@ THTTPStatus CHTTPDaemon::ParseRequest (void)
+ 	THTTPStatus Status = HTTPOK;
+ 
+ 	m_RequestMethod = HTTPRequestMethodUnknown;
++	m_bRequestPersistent = FALSE;
+ 	m_RequestURI[0] = '\0';
+ 	m_RequestPath[0] = '\0';
+ 	m_RequestParams[0] = '\0';
+@@ -599,6 +592,23 @@ THTTPStatus CHTTPDaemon::ParseHeaderField (char *pLine)
+ 
+ 		m_nRequestContentLength = nAccu;
+ 	}
++	else if (strcmp (pToken, "Connection") == 0)
++	{
++		if ((pToken = strtok_r (0, " ", &pSavePtr)) != 0)
++		{
++			// case-insensitive match for "keep-alive"
++			char szConn[16];
++			unsigned i;
++			for (i = 0; pToken[i] && i < sizeof szConn - 1; i++)
++			{
++				char c = pToken[i];
++				if (c >= 'A' && c <= 'Z') c += 32;
++				szConn[i] = c;
++			}
++			szConn[i] = '\0';
++			m_bRequestPersistent = (strcmp (szConn, "keep-alive") == 0);
++		}
++	}
+ 
+ 	return HTTPOK;
+ }
