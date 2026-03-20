@@ -114,6 +114,20 @@ jobs:
           mkdir -p out/${{ matrix.board }}
           cp kernel*.img out/${{ matrix.board }}/
 
+      - name: Kernel size report
+        run: |
+          echo "## Kernel size — ${{ matrix.board }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "| File | Size (KiB) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|------------|" >> "$GITHUB_STEP_SUMMARY"
+          for f in out/${{ matrix.board }}/kernel*.img; do
+            SIZE_B=$(stat -c %s "$f")
+            SIZE_KiB=$(( SIZE_B / 1024 ))
+            echo "| \`$(basename $f)\` | ${SIZE_KiB} |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$SIZE_KiB" -gt 10240 ]; then
+              echo "::warning file=$(basename $f)::$(basename $f) is ${SIZE_KiB} KiB (exceeds 10 MiB soft limit)"
+            fi
+          done
+
       - name: Upload built kernel
         uses: actions/upload-artifact@v4
         with:
