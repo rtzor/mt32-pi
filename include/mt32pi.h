@@ -491,6 +491,16 @@ private:
 	// Auto-next
 	bool             m_bSeqAutoNext;            // advance to next file when song ends
 
+	// Per-file seek memory: remember the last tick when leaving a file so the
+	// user can return to roughly the same position.  Bounded fixed-size table.
+	static constexpr size_t SeekHistoryMax = 32;
+	struct TSeekEntry { char szPath[SeqPathMax]; int nTick; };
+	TSeekEntry       m_SeekHistory[SeekHistoryMax];
+	size_t           m_nSeekHistoryCount;
+
+	int  SeekHistoryGet(const char* pPath) const;   // -1 if not found
+	void SeekHistorySet(const char* pPath, int nTick);
+
 	bool GetAdjacentMIDIFile(const char* pCurrentPath, int nDirection,
 	                         char* pOutPath, size_t nMaxLen) const;
 

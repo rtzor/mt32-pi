@@ -149,6 +149,8 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	s_pThis = this;
 	m_szSeqCurrentFile[0] = '\0';
 	m_szSeqPausedFile[0]  = '\0';
+	m_nSeekHistoryCount   = 0;
+	memset(m_SeekHistory, 0, sizeof(m_SeekHistory));
 	memset(m_activeNotes, 0, sizeof(m_activeNotes));
 	m_eMidiSource = static_cast<u8>(EMidiSource::Physical);
 }
@@ -1329,7 +1331,14 @@ void CMT32Pi::SequencerPlayFile(const char* pPath)
 		}
 	}
 
-// Play file via fluid_player (reads the file from SD — may take >100ms)
+// Save current playback position before switching to a different file
+	if (m_szSeqCurrentFile[0] && m_bSeqIsPlaying && m_pFluidSequencer &&
+	    strcmp(m_szSeqCurrentFile, pPath) != 0)
+	{
+		SeekHistorySet(m_szSeqCurrentFile, m_pFluidSequencer->GetCurrentTick());
+	}
+
+	// Play file via fluid_player (reads the file from SD — may take >100ms)
         // m_bSeqLoading is set volatile so the WebSocket timer interrupt can see it
         m_bSeqLoading = true;
         const bool bPlayOK = m_pFluidSequencer->Play(pPath);
@@ -1342,6 +1351,15 @@ void CMT32Pi::SequencerPlayFile(const char* pPath)
 
 	// Set loop mode: FluidSynth uses 1 = play once, -1 = infinite
 	m_pFluidSequencer->SetLoop(m_bSeqLoopEnabled ? -1 : 1);
+
+	// Restore saved seek position if we've been here before.
+	// Skip when resuming from pause — SequencerResume() handles its own seek.
+	if (!m_bSeqPaused)
+	{
+		const int nSavedTick = SeekHistoryGet(pPath);
+		if (nSavedTick > 0)
+			SequencerSeek(nSavedTick);
+	}
 
 	// Update status fields
 	__builtin_strncpy(m_szSeqCurrentFile, pPath, SeqPathMax - 1);
@@ -2690,6 +2708,38 @@ bool CMT32Pi::LoadRouterPreset()
 	f_close(&fp);
 	m_MIDIRouter.ApplyPreset(TRouterPreset::Custom);
 	return true;
+}
+
+int CMT32Pi::SeekHistoryGet(const char* pPath) const
+{
+	for (size_t i = 0; i < m_nSeekHistoryCount; ++i)
+		if (strcmp(m_SeekHistory[i].szPath, pPath) == 0)
+			return m_SeekHistory[i].nTick;
+	return -1;
+}
+
+void CMT32Pi::SeekHistorySet(const char* pPath, int nTick)
+{
+	// Update existing entry
+	for (size_t i = 0; i < m_nSeekHistoryCount; ++i)
+	{
+		if (strcmp(m_SeekHistory[i].szPath, pPath) == 0)
+		{
+			m_SeekHistory[i].nTick = nTick;
+			return;
+		}
+	}
+	// Append; if full, evict the oldest entry (index 0) and shift down
+	if (m_nSeekHistoryCount == SeekHistoryMax)
+	{
+		memmove(&m_SeekHistory[0], &m_SeekHistory[1],
+		        (SeekHistoryMax - 1) * sizeof(TSeekEntry));
+		m_nSeekHistoryCount = SeekHistoryMax - 1;
+	}
+	__builtin_strncpy(m_SeekHistory[m_nSeekHistoryCount].szPath, pPath, SeqPathMax - 1);
+	m_SeekHistory[m_nSeekHistoryCount].szPath[SeqPathMax - 1] = '\0';
+	m_SeekHistory[m_nSeekHistoryCount].nTick = nTick;
+	++m_nSeekHistoryCount;
 }
 
 void CMT32Pi::SwitchSynth(TSynth NewSynth)
