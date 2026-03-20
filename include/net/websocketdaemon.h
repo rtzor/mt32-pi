@@ -28,3 +28,7 @@ private:
         CMT32Pi*       m_pMT32Pi;
         u16            m_nPort;
         unsigned       m_nIntervalMs;
+};
+
+#endif
+
