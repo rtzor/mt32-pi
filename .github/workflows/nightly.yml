@@ -8,8 +8,6 @@ name: mt32-pi nightly
 #      system rot and measure true cold-compile time.
 
 on:
-  schedule:
-    - cron: '0 3 * * 1'  # Monday 03:00 UTC
   workflow_dispatch:
 
 env:
