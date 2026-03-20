@@ -345,6 +345,7 @@ TEST_CASE("Mixer: solo engine bypasses mixing")
 	CAudioMixer mixer;
 	mixer.AddEngine(&a);
 	mixer.AddEngine(&b);
+	mixer.SetEngineVolume(&a, 1.0f);
 	mixer.SetSoloEngine(&a);
 	mixer.SetMasterVolume(1.0f);
 
@@ -366,6 +367,7 @@ TEST_CASE("Mixer: solo mode applies master volume")
 	CSynthBaseStub a("A", TSynth::MT32, 1.0f);
 	CAudioMixer mixer;
 	mixer.AddEngine(&a);
+	mixer.SetEngineVolume(&a, 1.0f);
 	mixer.SetSoloEngine(&a);
 	mixer.SetMasterVolume(0.4f);
 
