@@ -38,6 +38,12 @@ public:
 	static constexpr unsigned MaxEngines = 4;
 	static constexpr unsigned NumChannels = 2;  // stereo
 
+	struct TRenderProfile
+	{
+		unsigned nEngineRenderUs[MaxEngines];
+		unsigned nMixUs;
+	};
+
 	CAudioMixer();
 
 	// Register engines (call during init)
@@ -55,13 +61,17 @@ public:
 
 	// Render mixed audio (stereo interleaved, nFrames = number of sample frames)
 	// pOutput must have space for nFrames * NumChannels floats
-	void Render(float* pOutput, size_t nFrames);
+	void Render(float* pOutput, size_t nFrames, TRenderProfile* pProfile = nullptr);
 
 	// If only one engine should render (single mode optimization),
 	// set this to bypass mixing overhead
 	void SetSoloEngine(CSynthBase* pEngine);
 	void ClearSoloEngine() { m_pSoloEngine = nullptr; }
 	CSynthBase* GetSoloEngine() const { return m_pSoloEngine; }
+	CSynthBase* GetEngine(unsigned nIndex) const
+	{
+		return nIndex < m_nEngineCount ? m_Engines[nIndex].pEngine : nullptr;
+	}
 
 	unsigned GetEngineCount() const { return m_nEngineCount; }
 

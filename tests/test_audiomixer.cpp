@@ -6,12 +6,15 @@
 
 #include "doctest/doctest.h"
 #include "audiomixer.h"
+#include "stubs/circle/timer.h"
 #include "stubs/synthbase_stub.h"
 
 #include <cmath>
 #include <cstring>
 
 static constexpr float kEpsilon = 1e-5f;
+
+namespace StubTimer { extern unsigned s_clock_ticks; }
 
 // ---------------------------------------------------------------
 // Construction
@@ -211,6 +214,47 @@ TEST_CASE("Mixer: master volume scales everything")
 
 	for (size_t i = 0; i < nFrames * 2; ++i)
 		CHECK(output[i] == doctest::Approx(0.25f));
+}
+
+TEST_CASE("Mixer: profiling captures per-engine render time and mix overhead")
+{
+	StubTimer::s_clock_ticks = 0;
+	CSynthBaseStub a("A", TSynth::MT32, 0.25f, 30);
+	CSynthBaseStub b("B", TSynth::SoundFont, 0.50f, 70);
+	CAudioMixer mixer;
+	mixer.AddEngine(&a);
+	mixer.AddEngine(&b);
+
+	constexpr size_t nFrames = 16;
+	float output[nFrames * 2];
+	CAudioMixer::TRenderProfile profile;
+
+	mixer.Render(output, nFrames, &profile);
+
+	CHECK(profile.nEngineRenderUs[0] == 30u);
+	CHECK(profile.nEngineRenderUs[1] == 70u);
+	CHECK(profile.nMixUs >= 0u);
+}
+
+TEST_CASE("Mixer: solo profiling attributes time to the solo engine")
+{
+	StubTimer::s_clock_ticks = 0;
+	CSynthBaseStub a("A", TSynth::MT32, 1.0f, 55);
+	CSynthBaseStub b("B", TSynth::SoundFont, 1.0f, 80);
+	CAudioMixer mixer;
+	mixer.AddEngine(&a);
+	mixer.AddEngine(&b);
+	mixer.SetSoloEngine(&b);
+
+	constexpr size_t nFrames = 8;
+	float output[nFrames * 2];
+	CAudioMixer::TRenderProfile profile;
+
+	mixer.Render(output, nFrames, &profile);
+
+	CHECK(profile.nEngineRenderUs[0] == 0u);
+	CHECK(profile.nEngineRenderUs[1] == 80u);
+	CHECK(profile.nMixUs >= 0u);
 }
 
 // ---------------------------------------------------------------

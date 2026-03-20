@@ -3476,6 +3476,15 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	HTML += "<button id='idx-stop-btn' onclick='idxStop()' style='display:none;'>&#9646; Stop</button>";
 	HTML += "<button onclick='idxNext()' title='Next'>&#9654;&#9654;</button>";
 	HTML += "</div></section>";
+	HTML += "<section><h2>Audio profiler</h2><table>";
+	HTML += "<tr><th>Total</th><td id='idx-prof-total'>0 us</td></tr>";
+	HTML += "<tr><th>Average</th><td id='idx-prof-avg'>0 us</td></tr>";
+	HTML += "<tr><th>Deadline</th><td id='idx-prof-deadline'>0 us</td></tr>";
+	HTML += "<tr><th>CPU load</th><td id='idx-prof-cpu'>0%</td></tr>";
+	HTML += "<tr><th>MT-32</th><td id='idx-prof-mt32'>0 us (0%)</td></tr>";
+	HTML += "<tr><th>FluidSynth</th><td id='idx-prof-fluid'>0 us (0%)</td></tr>";
+	HTML += "<tr><th>Mixer</th><td id='idx-prof-mixer'>0 us (0%)</td></tr>";
+	HTML += "</table></section>";
 
 	// ---- MIDI Recorder section ----
 	HTML += "<section><h2>MIDI Recorder</h2>";
@@ -3549,6 +3558,9 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	HTML += "if(ppb){ppb.textContent=st2==='playing'?'\\u23F8 Pause':(st2==='paused'?'\\u25B6 Resume':'\\u25B6 Play');}";
 	HTML += "if(stb)stb.style.display=(st2==='playing'||st2==='paused')?'':'none';}";
 	HTML += "var sf=document.getElementById('idx-seq-file');if(sf)sf.textContent=(d.file||'').replace(/^(SD:|USB:)/,'')||'\\u2014';";
+	HTML += "var pt=document.getElementById('idx-prof-total'),pa=document.getElementById('idx-prof-avg'),pd=document.getElementById('idx-prof-deadline'),pc=document.getElementById('idx-prof-cpu'),pm=document.getElementById('idx-prof-mt32'),pf=document.getElementById('idx-prof-fluid'),px=document.getElementById('idx-prof-mixer');";
+	HTML += "if(pt)pt.textContent=(d.render_us||0)+' us';if(pa)pa.textContent=(d.render_avg_us||0)+' us';if(pd)pd.textContent=((d.deadline_us!==undefined?d.deadline_us:0))+' us';if(pc)pc.textContent=((d.cpu_load!==undefined?d.cpu_load:0))+'%';";
+	HTML += "if(pm)pm.textContent=(d.mt32_render_us||0)+' us ('+((d.mt32_cpu!==undefined?d.mt32_cpu:0))+'%)';if(pf)pf.textContent=(d.fluid_render_us||0)+' us ('+((d.fluid_cpu!==undefined?d.fluid_cpu:0))+'%)';if(px)px.textContent=(d.mixer_render_us||0)+' us ('+((d.mixer_cpu!==undefined?d.mixer_cpu:0))+'%)';";
 	// Recorder badge + button
 	HTML += "var rb=document.getElementById('idx-rec-btn'),rbg=document.getElementById('idx-rec-badge');";
 	HTML += "if(rb){var rec=!!d.recording;rb.textContent=rec?'\\u23F9 Stop Recording':'\\u23FA Start Recording';rb.className=rec?'danger':'primary';}";

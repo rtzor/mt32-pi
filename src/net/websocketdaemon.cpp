@@ -211,9 +211,13 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 	// Audio render performance + recorder state
 	{
 		int added = snprintf(buf + n, bufSize - n,
-			"],\"render_us\":%u,\"render_avg_us\":%u,\"cpu_load\":%u"
+			"],\"render_us\":%u,\"render_avg_us\":%u,\"deadline_us\":%u,\"cpu_load\":%u"
+			",\"mt32_render_us\":%u,\"fluid_render_us\":%u,\"mixer_render_us\":%u"
+			",\"mt32_cpu\":%u,\"fluid_cpu\":%u,\"mixer_cpu\":%u"
 			",\"recording\":%s}",
-			st.Mixer.nRenderUs, st.Mixer.nRenderAvgUs, st.Mixer.nCpuLoadPercent,
+			st.Mixer.nRenderUs, st.Mixer.nRenderAvgUs, st.Mixer.nDeadlineUs, st.Mixer.nCpuLoadPercent,
+			st.Mixer.nMT32RenderUs, st.Mixer.nFluidRenderUs, st.Mixer.nMixerRenderUs,
+			st.Mixer.nMT32LoadPercent, st.Mixer.nFluidLoadPercent, st.Mixer.nMixerLoadPercent,
 			st.bMidiRecording ? "true" : "false");
 		if (added <= 0) return -1;
 		return n + added;

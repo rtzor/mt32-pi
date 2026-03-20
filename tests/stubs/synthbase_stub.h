@@ -9,6 +9,7 @@
 #define _synthbase_stub_h
 
 #include "circle_types.h"
+#include "circle/timer.h"
 #include <cstring>
 
 // Minimal CLCD stub
@@ -74,11 +75,13 @@ public:
 class CSynthBaseStub : public CSynthBase
 {
 public:
-	CSynthBaseStub(const char* pName, TSynth type, float fRenderValue = 0.0f)
+	CSynthBaseStub(const char* pName, TSynth type, float fRenderValue = 0.0f,
+		unsigned nRenderCostUs = 0)
 		: CSynthBase(48000),
 		  m_pName(pName),
 		  m_Type(type),
 		  m_fRenderValue(fRenderValue),
+		  m_nRenderCostUs(nRenderCostUs),
 		  m_nShortMessageCount(0),
 		  m_nLastShortMessage(0),
 		  m_nSysExCount(0),
@@ -111,6 +114,7 @@ public:
 	size_t Render(float* pOutBuffer, size_t nFrames) override
 	{
 		++m_nRenderCount;
+		StubTimer::s_clock_ticks += m_nRenderCostUs;
 		for (size_t i = 0; i < nFrames * 2; ++i)
 			pOutBuffer[i] = m_fRenderValue;
 		return nFrames;
@@ -130,6 +134,7 @@ public:
 	const char* m_pName;
 	TSynth      m_Type;
 	float       m_fRenderValue;
+	unsigned    m_nRenderCostUs;
 
 	unsigned    m_nShortMessageCount;
 	u32         m_nLastShortMessage;

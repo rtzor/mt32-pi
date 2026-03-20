@@ -22,6 +22,8 @@
 
 #include "audiomixer.h"
 
+#include <circle/timer.h>
+
 #ifndef UNIT_TEST
 #include "synth/synthbase.h"
 #else
@@ -97,17 +99,31 @@ void CAudioMixer::SetSoloEngine(CSynthBase* pEngine)
 		m_pSoloEngine = pEngine;
 }
 
-void CAudioMixer::Render(float* pOutput, size_t nFrames)
+void CAudioMixer::Render(float* pOutput, size_t nFrames, TRenderProfile* pProfile)
 {
 	const size_t nSamples = nFrames * NumChannels;
+	unsigned nMixUs = 0;
+
+	if (pProfile)
+	{
+		for (unsigned i = 0; i < MaxEngines; ++i)
+			pProfile->nEngineRenderUs[i] = 0;
+		pProfile->nMixUs = 0;
+	}
 
 	// Solo mode: render directly into the output buffer (no mixing overhead)
 	if (m_pSoloEngine)
 	{
+		const unsigned nRenderStart = CTimer::GetClockTicks();
 		m_pSoloEngine->Render(pOutput, nFrames);
+		const unsigned nRenderElapsed = CTimer::GetClockTicks() - nRenderStart;
 
 		// Apply per-engine volume and master volume
 		int idx = FindEngine(m_pSoloEngine);
+		if (pProfile && idx >= 0)
+			pProfile->nEngineRenderUs[idx] = nRenderElapsed;
+
+		const unsigned nMixStart = CTimer::GetClockTicks();
 		float fVol = (idx >= 0) ? m_Engines[idx].fVolume : 1.0f;
 		float fGain = fVol * m_fMasterVolume;
 		if (fGain < 1.0f)
@@ -115,14 +131,23 @@ void CAudioMixer::Render(float* pOutput, size_t nFrames)
 			for (size_t i = 0; i < nSamples; ++i)
 				pOutput[i] *= fGain;
 		}
+		nMixUs = CTimer::GetClockTicks() - nMixStart;
+		if (pProfile)
+			pProfile->nMixUs = nMixUs;
 		return;
 	}
 
 	// Clear output
+	const unsigned nClearStart = CTimer::GetClockTicks();
 	memset(pOutput, 0, nSamples * sizeof(float));
+	nMixUs += CTimer::GetClockTicks() - nClearStart;
 
 	if (m_nEngineCount == 0)
+	{
+		if (pProfile)
+			pProfile->nMixUs = nMixUs;
 		return;
+	}
 
 	// Temp buffer for each engine's output (stack allocation, stereo interleaved)
 	float tempBuf[nSamples];
@@ -134,7 +159,11 @@ void CAudioMixer::Render(float* pOutput, size_t nFrames)
 			continue;
 
 		// Render this engine
+		const unsigned nRenderStart = CTimer::GetClockTicks();
 		slot.pEngine->Render(tempBuf, nFrames);
+		const unsigned nRenderElapsed = CTimer::GetClockTicks() - nRenderStart;
+		if (pProfile)
+			pProfile->nEngineRenderUs[e] = nRenderElapsed;
 
 		// Compute per-channel gain from volume + pan
 		// Simple constant-power-ish pan law:
@@ -150,19 +179,26 @@ void CAudioMixer::Render(float* pOutput, size_t nFrames)
 		const float fGainR = fVol * (fPan > 0.0f ? 1.0f : 1.0f + fPan);
 
 		// Mix into output
+		const unsigned nMixStart = CTimer::GetClockTicks();
 		for (size_t i = 0; i < nSamples; i += NumChannels)
 		{
 			pOutput[i]     += tempBuf[i]     * fGainL;
 			pOutput[i + 1] += tempBuf[i + 1] * fGainR;
 		}
+		nMixUs += CTimer::GetClockTicks() - nMixStart;
 	}
 
 	// Apply master volume and clamp
+	const unsigned nPostStart = CTimer::GetClockTicks();
 	for (size_t i = 0; i < nSamples; ++i)
 	{
 		pOutput[i] *= m_fMasterVolume;
 		pOutput[i] = Clamp(pOutput[i], -1.0f, 1.0f);
 	}
+	nMixUs += CTimer::GetClockTicks() - nPostStart;
+
+	if (pProfile)
+		pProfile->nMixUs = nMixUs;
 }
 
 int CAudioMixer::FindEngine(CSynthBase* pEngine) const

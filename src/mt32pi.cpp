@@ -129,6 +129,9 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_nRenderAvgUs(0),
 	  m_nRenderPeakUs(0),
 	  m_nDeadlineUs(0),
+	  m_nRenderMT32Us(0),
+	  m_nRenderFluidUs(0),
+	  m_nRenderMixerUs(0),
 	  m_bAutoReducePartials(true),
 	  m_bMenuLongPressConsumed(false),
 
@@ -1255,14 +1258,40 @@ s8 IntBuffer[nQueueSizeFrames * nBytesPerFrame + (bI2S ? 0 : 1)];
 
 		// Measure render time
 		const unsigned nStart = CTimer::GetClockTicks();
+		unsigned nMT32Us = 0;
+		unsigned nFluidUs = 0;
+		unsigned nMixerUs = 0;
 
 		if (m_bMixerEnabled)
-			m_AudioMixer.Render(FloatBuffer, nFrames);
+		{
+			CAudioMixer::TRenderProfile Profile;
+			m_AudioMixer.Render(FloatBuffer, nFrames, &Profile);
+			nMixerUs = Profile.nMixUs;
+			for (unsigned i = 0; i < m_AudioMixer.GetEngineCount(); ++i)
+			{
+				CSynthBase* pEngine = m_AudioMixer.GetEngine(i);
+				if (pEngine == m_pMT32Synth)
+					nMT32Us = Profile.nEngineRenderUs[i];
+				else if (pEngine == m_pSoundFontSynth)
+					nFluidUs = Profile.nEngineRenderUs[i];
+			}
+		}
 		else
+		{
+			const unsigned nSynthStart = CTimer::GetClockTicks();
 			m_pCurrentSynth->Render(FloatBuffer, nFrames);
+			const unsigned nSynthUs = CTimer::GetClockTicks() - nSynthStart;
+			if (m_pCurrentSynth == m_pMT32Synth)
+				nMT32Us = nSynthUs;
+			else if (m_pCurrentSynth == m_pSoundFontSynth)
+				nFluidUs = nSynthUs;
+		}
 
 		const unsigned nElapsed = CTimer::GetClockTicks() - nStart;
 		m_nRenderUs = nElapsed;
+		m_nRenderMT32Us = nMT32Us;
+		m_nRenderFluidUs = nFluidUs;
+		m_nRenderMixerUs = nMixerUs;
 
 		// Exponential moving average (alpha ≈ 1/16)
 		m_nRenderAvgUs = m_nRenderAvgUs - (m_nRenderAvgUs >> 4) + (nElapsed >> 4);
@@ -2424,6 +2453,15 @@ CMT32Pi::TMixerStatus CMT32Pi::GetMixerStatus() const
 	s.nDeadlineUs    = m_nDeadlineUs;
 	s.nCpuLoadPercent = m_nDeadlineUs > 0
 		? static_cast<unsigned>(m_nRenderAvgUs * 100U / m_nDeadlineUs) : 0;
+	s.nMT32RenderUs  = m_nRenderMT32Us;
+	s.nFluidRenderUs = m_nRenderFluidUs;
+	s.nMixerRenderUs = m_nRenderMixerUs;
+	s.nMT32LoadPercent = m_nDeadlineUs > 0
+		? static_cast<unsigned>(m_nRenderMT32Us * 100U / m_nDeadlineUs) : 0;
+	s.nFluidLoadPercent = m_nDeadlineUs > 0
+		? static_cast<unsigned>(m_nRenderFluidUs * 100U / m_nDeadlineUs) : 0;
+	s.nMixerLoadPercent = m_nDeadlineUs > 0
+		? static_cast<unsigned>(m_nRenderMixerUs * 100U / m_nDeadlineUs) : 0;
 
 	return s;
 }

@@ -179,6 +179,12 @@ public:
 		unsigned nRenderPeakUs;  // peak render time since last read
 		unsigned nDeadlineUs;    // max allowed render time for current chunk
 		unsigned nCpuLoadPercent;// render_avg / deadline * 100
+		unsigned nMT32RenderUs;  // MT-32 render time for the last chunk
+		unsigned nFluidRenderUs; // FluidSynth render time for the last chunk
+		unsigned nMixerRenderUs; // mixer/gain/clamp overhead for the last chunk
+		unsigned nMT32LoadPercent;
+		unsigned nFluidLoadPercent;
+		unsigned nMixerLoadPercent;
 	};
 
 	TMixerStatus GetMixerStatus() const;
@@ -467,6 +473,9 @@ private:
 	volatile unsigned m_nRenderAvgUs;        // exponential moving average
 	volatile unsigned m_nRenderPeakUs;       // peak since last API read
 	volatile unsigned m_nDeadlineUs;         // deadline for current chunk size
+	volatile unsigned m_nRenderMT32Us;       // MT-32 render time for last chunk
+	volatile unsigned m_nRenderFluidUs;      // FluidSynth render time for last chunk
+	volatile unsigned m_nRenderMixerUs;      // mixer overhead for last chunk
 	bool m_bAutoReducePartials;              // auto-reduce MT-32 partials if overloaded
 
 	// Menu long-press tracking
