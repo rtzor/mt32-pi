@@ -19,7 +19,9 @@ SRCS      = test_main.cpp \
             test_midirouter.cpp \
             ../src/midirouter.cpp \
             test_audiomixer.cpp \
-            ../src/audiomixer.cpp
+            ../src/audiomixer.cpp \
+            test_midiparser.cpp \
+            ../src/midiparser.cpp
 
 OBJS      = $(SRCS:.cpp=.o)
 TARGET    = run_tests
