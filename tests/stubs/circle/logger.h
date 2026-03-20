@@ -12,6 +12,7 @@
 
 #define LOGMODULE(n)   static_assert(true, "")
 #define LOGDBG(...)    do {} while (0)
+#define LOGNOTE(...)   do {} while (0)
 #define LOGWARN(...)   do {} while (0)
 #define LOGERR(...)    do {} while (0)
 #define LOGPANIC(...)  do {} while (0)

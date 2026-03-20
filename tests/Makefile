@@ -24,7 +24,11 @@ SRCS      = test_main.cpp \
             ../src/audiomixer.cpp \
             test_midiparser.cpp \
             ../src/midiparser.cpp \
-            test_config_parse.cpp
+            test_config_parse.cpp \
+            test_fluidsequencer.cpp \
+            ../src/fluidsequencer.cpp \
+            stubs/fluidsynth_stub.cpp \
+            stubs/fatfs_stub.cpp
 
 # C source files (inih)
 CFILES    = ../external/inih/ini.c
