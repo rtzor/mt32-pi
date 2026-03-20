@@ -135,6 +135,7 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_pFluidSequencer(nullptr),
 	  m_nTempoMultiplier(1.0),
 	  m_bSeqLoopEnabled(false),
+	  m_bSeqLoading(false),
 	  m_bSeqIsPlaying(false),
 	  m_bSeqFinished(false),
 	  m_nSeqElapsedUs(0),
@@ -1305,8 +1306,12 @@ void CMT32Pi::SequencerPlayFile(const char* pPath)
 		}
 	}
 
-	// Play file via fluid_player
-	if (!m_pFluidSequencer->Play(pPath))
+// Play file via fluid_player (reads the file from SD — may take >100ms)
+        // m_bSeqLoading is set volatile so the WebSocket timer interrupt can see it
+        m_bSeqLoading = true;
+        const bool bPlayOK = m_pFluidSequencer->Play(pPath);
+        m_bSeqLoading = false;
+        if (!bPlayOK)
 	{
 		LOGWARN("FluidSequencer: failed to play %s", pPath);
 		return;
@@ -1351,6 +1356,7 @@ void CMT32Pi::SequencerStop()
 CMT32Pi::TSequencerStatus CMT32Pi::GetSequencerStatus() const
 {
 	TSequencerStatus s;
+	s.bLoading      = m_bSeqLoading;
 	s.bLoopEnabled  = m_bSeqLoopEnabled;
 	s.bPaused       = m_bSeqPaused;
 	s.bAutoNext     = m_bSeqAutoNext;

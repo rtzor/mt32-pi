@@ -473,6 +473,7 @@ private:
 	CFluidSequencer* m_pFluidSequencer;  // heap, allocated on first play
 	double           m_nTempoMultiplier; // current tempo multiplier (for status reporting)
 	bool    m_bSeqLoopEnabled;           // repeat when song finishes
+	volatile bool m_bSeqLoading;         // true while SequencerPlayFile is reading the file from SD
 	bool    m_bSeqIsPlaying;             // playback active
 	bool    m_bSeqFinished;              // song ended naturally (loop=off)
 	u32     m_nSeqElapsedUs;             // elapsed µs (updated each Tick)

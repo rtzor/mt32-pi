@@ -815,6 +815,7 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		CString JSON;
 		JSON += "{";
 		AppendJSONPairBool(JSON, "playing", s.bPlaying);
+		AppendJSONPairBool(JSON, "loading", s.bLoading);
 		AppendJSONPairBool(JSON, "paused", s.bPaused);
 		AppendJSONPairBool(JSON, "loop_enabled", s.bLoopEnabled);
 		AppendJSONPairBool(JSON, "auto_next", s.bAutoNext);
@@ -2297,7 +2298,7 @@ THTTPStatus CWebDaemon::BuildStylesheet(u8* pBuffer, unsigned* pLength, const ch
 			".statusbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px;}"
 			".statusbar .pill{background:#0b1220;border-color:#334155;color:#cbd5e1;border-radius:999px;}"
 			".badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;background:#1e293b;border:1px solid #475569;}"
-			".badge.playing{background:#14532d;border-color:#16a34a;}.badge.finished{background:#44403c;border-color:#a8a29e;}"
+			".badge.playing{background:#14532d;border-color:#16a34a;}.badge.finished{background:#44403c;border-color:#a8a29e;}.badge.loading{background:#1e3a5f;border-color:#3b82f6;}"
 			".tabbar{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px;}"
 			".tabbtn{background:#0b1220;color:#cbd5e1;border:1px solid #334155;border-radius:999px;padding:10px 14px;cursor:pointer;}"
 			".tabbtn.active{background:#1d4ed8;border-color:#1d4ed8;color:#fff;}"
@@ -2455,9 +2456,9 @@ THTTPStatus CWebDaemon::BuildSequencerPage(u8* pBuffer, unsigned* pLength, const
 		// applyStatus
 		HTML += "function applyStatus(d){if(!d)return;_ls=d;";
 		HTML += "var b=document.getElementById('seq-badge');";
-		HTML += "var st=d.paused?'paused':(d.playing?'playing':(d.finished?'finished':'stopped'));";
-		HTML += "b.textContent=st==='playing'?'Playing':(st==='paused'?'Paused':(st==='finished'?'Finished':'Stopped'));";
-		HTML += "b.className='badge'+(st==='playing'?' playing':(st==='finished'?' finished':''));";
+		HTML += "var st=d.loading?'loading':(d.paused?'paused':(d.playing?'playing':(d.finished?'finished':'stopped')));";
+		HTML += "b.textContent=st==='loading'?'Loading\u2026':(st==='playing'?'Playing':(st==='paused'?'Paused':(st==='finished'?'Finished':'Stopped')));";
+		HTML += "b.className='badge'+(st==='playing'?' playing':(st==='finished'?' finished':(st==='loading'?' loading':'')));";
 		HTML += "var fn=(d.file||'').replace(/^(SD:|USB:)/,'');";
 		HTML += "document.getElementById('seq-cur-file').textContent=fn||'\\u2014';";
 		// Pause/Resume button visibility

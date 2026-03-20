@@ -128,12 +128,13 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 	pPi->GetActiveNotes(activeNotes);
 
 	int n = snprintf(buf, bufSize,
-		"{\"playing\":%s,\"finished\":%s,\"loop_enabled\":%s,"
+		"{\"playing\":%s,\"loading\":%s,\"finished\":%s,\"loop_enabled\":%s,"
 		"\"file\":\"%s\",\"duration_ms\":%u,\"elapsed_ms\":%u,"
 		"\"bpm\":%d,\"current_tick\":%d,\"total_ticks\":%d,"
 		"\"division\":%d,\"tempo_multiplier\":%.3f,\"file_size_kb\":%u,"
 		"\"synth\":\"%s\",\"mixer\":%s,\"preset\":%d,\"channels\":[",
 		st.Sequencer.bPlaying     ? "true" : "false",
+		st.Sequencer.bLoading     ? "true" : "false",
 		st.Sequencer.bFinished    ? "true" : "false",
 		st.Sequencer.bLoopEnabled ? "true" : "false",
 		st.Sequencer.pFile ? st.Sequencer.pFile : "",
