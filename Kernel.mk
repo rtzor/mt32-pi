@@ -24,6 +24,7 @@ OBJS		:=	src/config.o \
 			src/midirecorder.o \
 			src/midiparser.o \
 			src/midirouter.o \
+			src/playlist.o \
 			src/audiomixer.o \
 			src/mt32pi.o \
 			src/net/applemidi.o \
