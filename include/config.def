@@ -107,6 +107,17 @@ CFG(mt32_pan,			int,				MixerMT32Pan,				0						)
 CFG(fluidsynth_pan,		int,				MixerFluidSynthPan,			0						)
 END_SECTION
 
+BEGIN_SECTION(effects)
+CFG(eq_enabled,        bool,  EffectsEQEnabled,      false )
+CFG(eq_bass_gain,      int,   EffectsEQBassGain,     0     )  // -12..+12 dB
+CFG(eq_treble_gain,    int,   EffectsEQTrebleGain,   0     )  // -12..+12 dB
+CFG(limiter_enabled,   bool,  EffectsLimiterEnabled, false )
+CFG(reverb_enabled,    bool,  EffectsReverbEnabled,  false )
+CFG(reverb_room_size,  float, EffectsReverbRoomSize,  0.5f  )  // 0.0..1.0
+CFG(reverb_damping,    float, EffectsReverbDamping,   0.5f  )  // 0.0..1.0
+CFG(reverb_wet,        float, EffectsReverbWet,       0.33f )  // 0.0..1.0
+END_SECTION
+
 BEGIN_SECTION(network)
 CFG(mode,			TNetworkMode,			NetworkMode,				TNetworkMode::Off				)
 CFG(dhcp,			bool,				NetworkDHCP,				true						)

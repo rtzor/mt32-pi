@@ -22,6 +22,8 @@ SRCS      = test_main.cpp \
             ../src/midirouter.cpp \
             test_audiomixer.cpp \
             ../src/audiomixer.cpp \
+            test_audioeffects.cpp \
+            ../src/audioeffects.cpp \
             test_midiparser.cpp \
             ../src/midiparser.cpp \
             test_config_parse.cpp \

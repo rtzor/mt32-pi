@@ -26,6 +26,7 @@ OBJS		:=	src/config.o \
 			src/midirouter.o \
 			src/playlist.o \
 			src/audiomixer.o \
+			src/audioeffects.o \
 			src/mt32pi.o \
 			src/net/applemidi.o \
 			src/net/ftpdaemon.o \

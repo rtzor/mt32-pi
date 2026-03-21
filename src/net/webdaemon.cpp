@@ -1388,6 +1388,16 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		AppendJSONPairInt(JSON, "deadline_us", static_cast<int>(ms.nDeadlineUs));
 		AppendJSONPairInt(JSON, "cpu_load", static_cast<int>(ms.nCpuLoadPercent));
 
+		// Post-mix audio effects
+		AppendJSONPairBool(JSON, "fx_eq_enabled",      ms.bEffectsEQEnabled);
+		AppendJSONPairBool(JSON, "fx_limiter_enabled", ms.bEffectsLimiterEnabled);
+		AppendJSONPairBool(JSON, "fx_reverb_enabled",  ms.bEffectsReverbEnabled);
+		AppendJSONPairInt(JSON,  "fx_eq_bass",         ms.nEffectsEQBass);
+		AppendJSONPairInt(JSON,  "fx_eq_treble",       ms.nEffectsEQTreble);
+		AppendJSONPairInt(JSON,  "fx_reverb_room",     ms.nEffectsReverbRoom);
+		AppendJSONPairInt(JSON,  "fx_reverb_damp",     ms.nEffectsReverbDamp);
+		AppendJSONPairInt(JSON,  "fx_reverb_wet",      ms.nEffectsReverbWet);
+
 		// Channel array
 		JSON += "\"channels\":[";
 		for (int i = 0; i < 16; ++i)
@@ -1550,6 +1560,49 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		{
 			m_pMT32Pi->ResetMixerChannelVolumes();
 			bApplied = true;
+		}
+		else if (std::strcmp(Param, "fx_eq_enabled") == 0)
+		{
+			bool b = false;
+			if (CConfig::ParseOption(Value, &b))
+				bApplied = m_pMT32Pi->SetEffectEQEnabled(b);
+		}
+		else if (std::strcmp(Param, "fx_eq_bass") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetEffectEQBass(nVal);
+		}
+		else if (std::strcmp(Param, "fx_eq_treble") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetEffectEQTreble(nVal);
+		}
+		else if (std::strcmp(Param, "fx_limiter_enabled") == 0)
+		{
+			bool b = false;
+			if (CConfig::ParseOption(Value, &b))
+				bApplied = m_pMT32Pi->SetEffectLimiterEnabled(b);
+		}
+		else if (std::strcmp(Param, "fx_reverb_enabled") == 0)
+		{
+			bool b = false;
+			if (CConfig::ParseOption(Value, &b))
+				bApplied = m_pMT32Pi->SetEffectReverbEnabled(b);
+		}
+		else if (std::strcmp(Param, "fx_reverb_room") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetEffectReverbRoom(nVal);
+		}
+		else if (std::strcmp(Param, "fx_reverb_damp") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetEffectReverbDamp(nVal);
+		}
+		else if (std::strcmp(Param, "fx_reverb_wet") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetEffectReverbWet(nVal);
 		}
 
 		const char* pOK = bApplied ? "{\"ok\":true}" : "{\"ok\":false}";
@@ -2847,6 +2900,18 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		HTML += "<button onclick='loadPreset()' style='background:#1c2e1a;border-color:#4ade80;'>&#128190; Load Preset</button>";
 		HTML += "</div></section>";
 
+		// Post-mix audio effects
+		HTML += "<section><h2>Audio Effects</h2><div class='grid'>";
+		HTML += "<label>EQ<select id='mx-fx-eq' onchange=\"setParam('fx_eq_enabled',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>";
+		HTML += "<label>Bass (dB)<input id='mx-fx-bass' type='number' min='-12' max='12' step='1' oninput=\"setParam('fx_eq_bass',this.value)\"></label>";
+		HTML += "<label>Treble (dB)<input id='mx-fx-treble' type='number' min='-12' max='12' step='1' oninput=\"setParam('fx_eq_treble',this.value)\"></label>";
+		HTML += "<label>Limiter<select id='mx-fx-lim' onchange=\"setParam('fx_limiter_enabled',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>";
+		HTML += "<label>Reverb<select id='mx-fx-rev' onchange=\"setParam('fx_reverb_enabled',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>";
+		HTML += "<label>Room % <input id='mx-fx-room' type='range' min='0' max='100' oninput=\"setParam('fx_reverb_room',this.value);document.getElementById('mx-fx-room-val').textContent=this.value\"> <span id='mx-fx-room-val'>50</span></label>";
+		HTML += "<label>Damp % <input id='mx-fx-damp' type='range' min='0' max='100' oninput=\"setParam('fx_reverb_damp',this.value);document.getElementById('mx-fx-damp-val').textContent=this.value\"> <span id='mx-fx-damp-val'>50</span></label>";
+		HTML += "<label>Wet %  <input id='mx-fx-wet'  type='range' min='0' max='100' oninput=\"setParam('fx_reverb_wet',this.value);document.getElementById('mx-fx-wet-val').textContent=this.value\"> <span id='mx-fx-wet-val'>33</span></label>";
+		HTML += "</div></section>";
+
 		HTML += "<p id='mx-msg' style='color:#64748b;'></p>";
 
 		// JavaScript
@@ -2943,10 +3008,14 @@ HTML += "var cpu=d.cpu_load;document.getElementById('mx-cpu').textContent=cpu;";
                 HTML += "if(cpu>=85){hint.textContent='\u26a0 underrun risk \u2014 increase chunk_size';hint.style.color='#ef4444';hint.style.display='inline';}";
                 HTML += "else if(cpu>=65){hint.textContent='approaching limit';hint.style.color='#f59e0b';hint.style.display='inline';}";
                 HTML += "else{hint.style.display='none';}";
-		HTML += "renderChannels(d.channels);});}";
-
-		HTML += "loadStatus();setInterval(loadStatus,2000);";
-
+		HTML += "var fxEq=document.getElementById('mx-fx-eq');if(fxEq)fxEq.value=d.fx_eq_enabled?'on':'off';";
+		HTML += "var fxBass=document.getElementById('mx-fx-bass');if(fxBass)fxBass.value=d.fx_eq_bass;";
+		HTML += "var fxTreb=document.getElementById('mx-fx-treble');if(fxTreb)fxTreb.value=d.fx_eq_treble;";
+		HTML += "var fxLim=document.getElementById('mx-fx-lim');if(fxLim)fxLim.value=d.fx_limiter_enabled?'on':'off';";
+		HTML += "var fxRev=document.getElementById('mx-fx-rev');if(fxRev)fxRev.value=d.fx_reverb_enabled?'on':'off';";
+		HTML += "var fxRoom=document.getElementById('mx-fx-room');if(fxRoom){fxRoom.value=d.fx_reverb_room;document.getElementById('mx-fx-room-val').textContent=d.fx_reverb_room;}";
+		HTML += "var fxDamp=document.getElementById('mx-fx-damp');if(fxDamp){fxDamp.value=d.fx_reverb_damp;document.getElementById('mx-fx-damp-val').textContent=d.fx_reverb_damp;}";
+		HTML += "var fxWet=document.getElementById('mx-fx-wet');if(fxWet){fxWet.value=d.fx_reverb_wet;document.getElementById('mx-fx-wet-val').textContent=d.fx_reverb_wet;}";
 		// WebSocket for real-time channel meters
 		HTML += "var _mxLv=new Array(16).fill(0),_mxPk=new Array(16).fill(0),_mxPa=new Array(16).fill(-9999);";
 		HTML += "var _mxTgt=new Array(16).fill(0),_mxPt=new Array(16).fill(0);";

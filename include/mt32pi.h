@@ -64,6 +64,7 @@
 #include "power.h"
 #include "ringbuffer.h"
 #include "audiomixer.h"
+#include "audioeffects.h"
 #include "midirouter.h"
 #include "midimonitor.h"
 #include "midirecorder.h"
@@ -186,6 +187,15 @@ public:
 		unsigned nMT32LoadPercent;
 		unsigned nFluidLoadPercent;
 		unsigned nMixerLoadPercent;
+		// Post-mix audio effects state
+		bool bEffectsEQEnabled;
+		bool bEffectsLimiterEnabled;
+		bool bEffectsReverbEnabled;
+		int  nEffectsEQBass;        // -12..+12 dB
+		int  nEffectsEQTreble;      // -12..+12 dB
+		int  nEffectsReverbRoom;    // 0-100 (maps to 0.0-1.0)
+		int  nEffectsReverbDamp;    // 0-100
+		int  nEffectsReverbWet;     // 0-100
 	};
 
 	TMixerStatus GetMixerStatus() const;
@@ -207,6 +217,16 @@ public:
 	bool SetMixerChannelVolume(u8 nChannel, int nVolumePercent);  // 0–100
 	int  GetMixerChannelVolume(u8 nChannel) const;
 	void ResetMixerChannelVolumes();
+
+	// Post-mix audio effects (called from Core 0 / web handler)
+	bool SetEffectEQEnabled(bool bEnabled);
+	bool SetEffectEQBass(int nDb);        // -12..+12
+	bool SetEffectEQTreble(int nDb);      // -12..+12
+	bool SetEffectLimiterEnabled(bool bEnabled);
+	bool SetEffectReverbEnabled(bool bEnabled);
+	bool SetEffectReverbRoom(int nPercent);  // 0-100 → 0.0-1.0
+	bool SetEffectReverbDamp(int nPercent);  // 0-100 → 0.0-1.0
+	bool SetEffectReverbWet(int nPercent);   // 0-100 → 0.0-1.0
 
 	// Save / load custom router preset to SD card
 	bool SaveRouterPreset() const;
@@ -482,9 +502,10 @@ private:
 	CMT32Synth* m_pMT32Synth;
 	CSoundFontSynth* m_pSoundFontSynth;
 
-	// MIDI Router + Audio Mixer
-	CMIDIRouter m_MIDIRouter;
-	CAudioMixer m_AudioMixer;
+	// MIDI Router + Audio Mixer + Effects
+	CMIDIRouter   m_MIDIRouter;
+	CAudioMixer   m_AudioMixer;
+	CAudioEffects m_AudioEffects;
 	bool m_bMixerEnabled;
 
 	// Audio render performance monitor (Core 2 writes, Core 0 reads)

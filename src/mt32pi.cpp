@@ -342,8 +342,22 @@ bool CMT32Pi::Initialize(bool bSerialMIDIAvailable)
 		}
 	}
 
-	// Initialize MIDI Router + Audio Mixer
+	// Initialize MIDI Router + Audio Mixer + Effects
 	SetupMixerRouting();
+
+	// Configure post-mix audio effects from config
+	{
+		CAudioEffects::TConfig fx;
+		fx.bEQEnabled       = m_pConfig->EffectsEQEnabled;
+		fx.nBassGain        = m_pConfig->EffectsEQBassGain;
+		fx.nTrebleGain      = m_pConfig->EffectsEQTrebleGain;
+		fx.bLimiterEnabled  = m_pConfig->EffectsLimiterEnabled;
+		fx.bReverbEnabled   = m_pConfig->EffectsReverbEnabled;
+		fx.fReverbRoomSize  = m_pConfig->EffectsReverbRoomSize;
+		fx.fReverbDamping   = m_pConfig->EffectsReverbDamping;
+		fx.fReverbWet       = m_pConfig->EffectsReverbWet;
+		m_AudioEffects.Configure(fx, static_cast<float>(m_pConfig->AudioSampleRate));
+	}
 
 	if (m_pPisound)
 		LOGNOTE("Using Pisound MIDI interface");
@@ -1296,6 +1310,9 @@ s8 IntBuffer[nQueueSizeFrames * nBytesPerFrame + (bI2S ? 0 : 1)];
 			else if (m_pCurrentSynth == m_pSoundFontSynth)
 				nFluidUs = nSynthUs;
 		}
+
+		// Post-mix effects chain (EQ → Reverb → Limiter/clamp)
+		m_AudioEffects.Process(FloatBuffer, nFrames);
 
 		const unsigned nElapsed = CTimer::GetClockTicks() - nStart;
 		m_nRenderUs = nElapsed;
@@ -2615,6 +2632,17 @@ CMT32Pi::TMixerStatus CMT32Pi::GetMixerStatus() const
 	s.nMixerLoadPercent = m_nDeadlineUs > 0
 		? static_cast<unsigned>(m_nRenderMixerUs * 100U / m_nDeadlineUs) : 0;
 
+	// Effects state
+	const CAudioEffects::TConfig& fx = m_AudioEffects.GetConfig();
+	s.bEffectsEQEnabled      = fx.bEQEnabled;
+	s.bEffectsLimiterEnabled = fx.bLimiterEnabled;
+	s.bEffectsReverbEnabled  = fx.bReverbEnabled;
+	s.nEffectsEQBass         = fx.nBassGain;
+	s.nEffectsEQTreble       = fx.nTrebleGain;
+	s.nEffectsReverbRoom     = static_cast<int>(fx.fReverbRoomSize * 100.0f + 0.5f);
+	s.nEffectsReverbDamp     = static_cast<int>(fx.fReverbDamping  * 100.0f + 0.5f);
+	s.nEffectsReverbWet      = static_cast<int>(fx.fReverbWet      * 100.0f + 0.5f);
+
 	return s;
 }
 
@@ -2823,6 +2851,80 @@ int CMT32Pi::GetMixerChannelVolume(u8 nChannel) const
 void CMT32Pi::ResetMixerChannelVolumes()
 {
 	m_MIDIRouter.ResetChannelVolumes();
+}
+
+// ---------------------------------------------------------------------------
+// Post-mix audio effects setters
+// All setters update the effect config and reconfigure on the fly.
+// ---------------------------------------------------------------------------
+
+bool CMT32Pi::SetEffectEQEnabled(bool bEnabled)
+{
+	CAudioEffects::TConfig cfg = m_AudioEffects.GetConfig();
+	cfg.bEQEnabled = bEnabled;
+	m_AudioEffects.Configure(cfg, static_cast<float>(m_pConfig->AudioSampleRate));
+	return true;
+}
+
+bool CMT32Pi::SetEffectEQBass(int nDb)
+{
+	if (nDb < -12 || nDb > 12) return false;
+	CAudioEffects::TConfig cfg = m_AudioEffects.GetConfig();
+	cfg.nBassGain = nDb;
+	m_AudioEffects.Configure(cfg, static_cast<float>(m_pConfig->AudioSampleRate));
+	return true;
+}
+
+bool CMT32Pi::SetEffectEQTreble(int nDb)
+{
+	if (nDb < -12 || nDb > 12) return false;
+	CAudioEffects::TConfig cfg = m_AudioEffects.GetConfig();
+	cfg.nTrebleGain = nDb;
+	m_AudioEffects.Configure(cfg, static_cast<float>(m_pConfig->AudioSampleRate));
+	return true;
+}
+
+bool CMT32Pi::SetEffectLimiterEnabled(bool bEnabled)
+{
+	CAudioEffects::TConfig cfg = m_AudioEffects.GetConfig();
+	cfg.bLimiterEnabled = bEnabled;
+	m_AudioEffects.Configure(cfg, static_cast<float>(m_pConfig->AudioSampleRate));
+	return true;
+}
+
+bool CMT32Pi::SetEffectReverbEnabled(bool bEnabled)
+{
+	CAudioEffects::TConfig cfg = m_AudioEffects.GetConfig();
+	cfg.bReverbEnabled = bEnabled;
+	m_AudioEffects.Configure(cfg, static_cast<float>(m_pConfig->AudioSampleRate));
+	return true;
+}
+
+bool CMT32Pi::SetEffectReverbRoom(int nPercent)
+{
+	if (nPercent < 0 || nPercent > 100) return false;
+	CAudioEffects::TConfig cfg = m_AudioEffects.GetConfig();
+	cfg.fReverbRoomSize = nPercent / 100.0f;
+	m_AudioEffects.Configure(cfg, static_cast<float>(m_pConfig->AudioSampleRate));
+	return true;
+}
+
+bool CMT32Pi::SetEffectReverbDamp(int nPercent)
+{
+	if (nPercent < 0 || nPercent > 100) return false;
+	CAudioEffects::TConfig cfg = m_AudioEffects.GetConfig();
+	cfg.fReverbDamping = nPercent / 100.0f;
+	m_AudioEffects.Configure(cfg, static_cast<float>(m_pConfig->AudioSampleRate));
+	return true;
+}
+
+bool CMT32Pi::SetEffectReverbWet(int nPercent)
+{
+	if (nPercent < 0 || nPercent > 100) return false;
+	CAudioEffects::TConfig cfg = m_AudioEffects.GetConfig();
+	cfg.fReverbWet = nPercent / 100.0f;
+	m_AudioEffects.Configure(cfg, static_cast<float>(m_pConfig->AudioSampleRate));
+	return true;
 }
 
 bool CMT32Pi::SaveRouterPreset() const
