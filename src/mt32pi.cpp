@@ -27,6 +27,10 @@
 #include <circle/sound/pwmsoundbasedevice.h>
 #include <fatfs/ff.h>
 
+#ifdef __aarch64__
+#include <arm_neon.h>
+#endif
+
 #include <cstdarg>
 #include <cstdlib>
 
@@ -1317,22 +1321,68 @@ s8 IntBuffer[nQueueSizeFrames * nBytesPerFrame + (bI2S ? 0 : 1)];
 
 		if (bReversedStereo)
 		{
-			// Convert to signed 24-bit integers with channel swap
-			for (size_t i = 0; i < nFrames * nChannels; i += nChannels)
+			// Convert to signed integers with channel swap
+			const size_t nSamples = nFrames * nChannels;
+#ifdef __aarch64__
+			if (bI2S)
 			{
-				s32* const pLeftSample = reinterpret_cast<s32*>(IntBuffer + i * nBytesPerSample);
-				s32* const pRightSample = reinterpret_cast<s32*>(IntBuffer + (i + 1) * nBytesPerSample);
-				*pLeftSample = FloatBuffer[i + 1] * Sample24BitMax;
-				*pRightSample = FloatBuffer[i] * Sample24BitMax;
+				// I2S: stride = sizeof(s32) = 4 bytes — fully vectorizable
+				// vrev64q_f32 swaps pairs within each 64-bit lane: {L,R,L,R}→{R,L,R,L}
+				const float32x4_t vScale = vdupq_n_f32(Sample24BitMax);
+				s32* const pOut = reinterpret_cast<s32*>(IntBuffer);
+				size_t i = 0;
+				for (; i + 4 <= nSamples; i += 4)
+				{
+					float32x4_t vf = vrev64q_f32(vld1q_f32(FloatBuffer + i));
+					vst1q_s32(pOut + i, vcvtq_s32_f32(vmulq_f32(vf, vScale)));
+				}
+				for (; i < nSamples; i += nChannels)
+				{
+					pOut[i]     = FloatBuffer[i + 1] * Sample24BitMax;
+					pOut[i + 1] = FloatBuffer[i]     * Sample24BitMax;
+				}
+			}
+			else
+#endif
+			{
+				// 24-bit PWM: 3-byte stride — scalar (overlapping writes via extra byte)
+				for (size_t i = 0; i < nSamples; i += nChannels)
+				{
+					s32* const pLeftSample = reinterpret_cast<s32*>(IntBuffer + i * nBytesPerSample);
+					s32* const pRightSample = reinterpret_cast<s32*>(IntBuffer + (i + 1) * nBytesPerSample);
+					*pLeftSample = FloatBuffer[i + 1] * Sample24BitMax;
+					*pRightSample = FloatBuffer[i] * Sample24BitMax;
+				}
 			}
 		}
 		else
 		{
-			// Convert to signed 24-bit integers
-			for (size_t i = 0; i < nFrames * nChannels; ++i)
+			// Convert to signed integers
+			const size_t nSamples = nFrames * nChannels;
+#ifdef __aarch64__
+			if (bI2S)
 			{
-				s32* const pSample = reinterpret_cast<s32*>(IntBuffer + i * nBytesPerSample);
-				*pSample = FloatBuffer[i] * Sample24BitMax;
+				// I2S: stride = sizeof(s32) = 4 bytes — fully vectorizable
+				const float32x4_t vScale = vdupq_n_f32(Sample24BitMax);
+				s32* const pOut = reinterpret_cast<s32*>(IntBuffer);
+				size_t i = 0;
+				for (; i + 4 <= nSamples; i += 4)
+				{
+					float32x4_t vf = vld1q_f32(FloatBuffer + i);
+					vst1q_s32(pOut + i, vcvtq_s32_f32(vmulq_f32(vf, vScale)));
+				}
+				for (; i < nSamples; ++i)
+					pOut[i] = FloatBuffer[i] * Sample24BitMax;
+			}
+			else
+#endif
+			{
+				// 24-bit PWM: 3-byte stride — scalar
+				for (size_t i = 0; i < nSamples; ++i)
+				{
+					s32* const pSample = reinterpret_cast<s32*>(IntBuffer + i * nBytesPerSample);
+					*pSample = FloatBuffer[i] * Sample24BitMax;
+				}
 			}
 		}
 
