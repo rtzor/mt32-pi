@@ -2823,13 +2823,7 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		HTML += "<label>Average <span id='mx-avg'>-</span> &micro;s</label>";
 		HTML += "<label>Peak <span id='mx-peak'>-</span> &micro;s</label>";
 		HTML += "<label>Deadline <span id='mx-deadline'>-</span> &micro;s</label>";
-		HTML += "<label>CPU load <strong id='mx-cpu'>-</strong>%</label>";
-		HTML += "</div></section>";
-
-		// Channel routing visual diagram + table
-		HTML += "<section><h2>Channel Routing</h2>";
-		HTML += "<div id='mx-route-map' style='display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;'></div>";
-		HTML += "<div style='display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:11px;color:#94a3b8;margin-bottom:8px;'>";
+                HTML += "<label>CPU load <strong id='mx-cpu'>-</strong>% <span id='mx-cpu-hint' style='font-size:11px;font-weight:normal;display:none'></span></label>";
 		HTML += "<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#3b82f6;vertical-align:middle;margin-right:3px;'></span>MT-32</span>";
 		HTML += "<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#22c55e;vertical-align:middle;margin-right:3px;'></span>FluidSynth</span>";
 		HTML += "<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#a855f7;vertical-align:middle;margin-right:3px;'></span>Layered</span>";
@@ -2943,7 +2937,12 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		HTML += "document.getElementById('mx-avg').textContent=d.render_avg_us;";
 		HTML += "document.getElementById('mx-peak').textContent=d.render_peak_us;";
 		HTML += "document.getElementById('mx-deadline').textContent=d.deadline_us;";
-		HTML += "document.getElementById('mx-cpu').textContent=d.cpu_load;";
+HTML += "var cpu=d.cpu_load;document.getElementById('mx-cpu').textContent=cpu;";
+                HTML += "var cpuEl=document.getElementById('mx-cpu');var hint=document.getElementById('mx-cpu-hint');";
+                HTML += "cpuEl.style.color=cpu>=85?'#ef4444':cpu>=65?'#f59e0b':'#22c55e';";
+                HTML += "if(cpu>=85){hint.textContent='\u26a0 underrun risk \u2014 increase chunk_size';hint.style.color='#ef4444';hint.style.display='inline';}";
+                HTML += "else if(cpu>=65){hint.textContent='approaching limit';hint.style.color='#f59e0b';hint.style.display='inline';}";
+                HTML += "else{hint.style.display='none';}";
 		HTML += "renderChannels(d.channels);});}";
 
 		HTML += "loadStatus();setInterval(loadStatus,2000);";
