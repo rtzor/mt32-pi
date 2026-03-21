@@ -2941,8 +2941,8 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Engine</th>");
 		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Remap&rarr;</th>");
 		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Layer</th>");
-		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Vol%</th>");
 		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Instrument</th>");
+		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Vol%</th>");
 		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;min-width:80px;'>Activity</th>");
 		html.Append("</tr></thead><tbody id='mx-ch'></tbody></table>");
 		html.Append("<div style='margin-top:8px;'>");

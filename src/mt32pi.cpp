@@ -3004,6 +3004,18 @@ bool CMT32Pi::SetMixerChannelVolume(u8 nChannel, int nVolumePercent)
 		return false;
 	const float fVol = static_cast<float>(nVolumePercent) / 100.0f;
 	m_MIDIRouter.SetChannelVolume(nChannel, fVol);
+
+	// Send CC7 immediately so the synth hears the change right away
+	// (the router multiplier only affects future incoming CC7s otherwise)
+	CSynthBase* pEngine = m_MIDIRouter.GetChannelEngine(nChannel);
+	if (pEngine)
+	{
+		const u8 nRemap  = m_MIDIRouter.GetChannelRemap(nChannel);
+		const u8 nCC7Val = static_cast<u8>(127.0f * fVol + 0.5f);
+		// CC7 on the remapped channel
+		const u32 nMsg = 0x0007B0u | nRemap | (static_cast<u32>(nCC7Val) << 16);
+		pEngine->HandleMIDIShortMessage(nMsg);
+	}
 	return true;
 }
 
