@@ -89,6 +89,7 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_bNetworkReady(false),
 	  m_pAppleMIDIParticipant(nullptr),
 	  m_pUDPMIDIReceiver(nullptr),
+	  m_pOSCReceiver(nullptr),
 	  m_pFTPDaemon(nullptr),
 	  m_pWebDaemon(nullptr),
 	  m_pWebSocketDaemon(nullptr),
@@ -1979,6 +1980,116 @@ void CMT32Pi::OnAppleMIDIDisconnect(const CIPAddress* pIPAddress, const char* pN
 	LCDLog(TLCDLogType::Notice, "%s disconnected!", pName);
 }
 
+void CMT32Pi::OnOSCMessage(const TOSCMessage& Msg)
+{
+	const char* pAddr = Msg.pAddress;
+
+	// /midi/* — build raw MIDI bytes and inject via SendRawMIDI()
+	if (strncmp(pAddr, "/midi/", 6) == 0)
+	{
+		const char* pSub = pAddr + 6;
+		u8 buf[3];
+
+		if (strcmp(pSub, "note_on") == 0 && Msg.nArgs >= 3 &&
+		    Msg.Args[0].Type == TOSCArgType::Int32 &&
+		    Msg.Args[1].Type == TOSCArgType::Int32 &&
+		    Msg.Args[2].Type == TOSCArgType::Int32)
+		{
+			buf[0] = 0x90u | static_cast<u8>(Msg.Args[0].i & 0x0F);
+			buf[1] = static_cast<u8>(Msg.Args[1].i & 0x7F);
+			buf[2] = static_cast<u8>(Msg.Args[2].i & 0x7F);
+			SendRawMIDI(buf, 3);
+		}
+		else if (strcmp(pSub, "note_off") == 0 && Msg.nArgs >= 3 &&
+		         Msg.Args[0].Type == TOSCArgType::Int32 &&
+		         Msg.Args[1].Type == TOSCArgType::Int32 &&
+		         Msg.Args[2].Type == TOSCArgType::Int32)
+		{
+			buf[0] = 0x80u | static_cast<u8>(Msg.Args[0].i & 0x0F);
+			buf[1] = static_cast<u8>(Msg.Args[1].i & 0x7F);
+			buf[2] = static_cast<u8>(Msg.Args[2].i & 0x7F);
+			SendRawMIDI(buf, 3);
+		}
+		else if (strcmp(pSub, "cc") == 0 && Msg.nArgs >= 3 &&
+		         Msg.Args[0].Type == TOSCArgType::Int32 &&
+		         Msg.Args[1].Type == TOSCArgType::Int32 &&
+		         Msg.Args[2].Type == TOSCArgType::Int32)
+		{
+			buf[0] = 0xB0u | static_cast<u8>(Msg.Args[0].i & 0x0F);
+			buf[1] = static_cast<u8>(Msg.Args[1].i & 0x7F);
+			buf[2] = static_cast<u8>(Msg.Args[2].i & 0x7F);
+			SendRawMIDI(buf, 3);
+		}
+		else if (strcmp(pSub, "program_change") == 0 && Msg.nArgs >= 2 &&
+		         Msg.Args[0].Type == TOSCArgType::Int32 &&
+		         Msg.Args[1].Type == TOSCArgType::Int32)
+		{
+			buf[0] = 0xC0u | static_cast<u8>(Msg.Args[0].i & 0x0F);
+			buf[1] = static_cast<u8>(Msg.Args[1].i & 0x7F);
+			SendRawMIDI(buf, 2);
+		}
+		else if (strcmp(pSub, "pitch_bend") == 0 && Msg.nArgs >= 2 &&
+		         Msg.Args[0].Type == TOSCArgType::Int32 &&
+		         Msg.Args[1].Type == TOSCArgType::Int32)
+		{
+			const int nVal = Msg.Args[1].i & 0x3FFF;
+			buf[0] = 0xE0u | static_cast<u8>(Msg.Args[0].i & 0x0F);
+			buf[1] = static_cast<u8>(nVal & 0x7F);
+			buf[2] = static_cast<u8>((nVal >> 7) & 0x7F);
+			SendRawMIDI(buf, 3);
+		}
+		else if (strcmp(pSub, "raw") == 0 && Msg.nArgs >= 1 &&
+		         Msg.Args[0].Type == TOSCArgType::Blob)
+		{
+			SendRawMIDI(Msg.Args[0].b.pData, Msg.Args[0].b.nSize);
+		}
+		return;
+	}
+
+	// /mt32pi/* — control messages (same calling context as web daemon tasks)
+	if (strncmp(pAddr, "/mt32pi/", 8) == 0)
+	{
+		const char* pSub = pAddr + 8;
+
+		if (strcmp(pSub, "volume") == 0 && Msg.nArgs >= 1 &&
+		    Msg.Args[0].Type == TOSCArgType::Int32)
+		{
+			SetMasterVolume(Msg.Args[0].i);
+		}
+		else if (strcmp(pSub, "synth") == 0 && Msg.nArgs >= 1 &&
+		         Msg.Args[0].Type == TOSCArgType::String)
+		{
+			if (strcmp(Msg.Args[0].s, "mt32") == 0)
+				SetActiveSynth(TSynth::MT32);
+			else if (strcmp(Msg.Args[0].s, "soundfont") == 0)
+				SetActiveSynth(TSynth::SoundFont);
+		}
+		else if (strcmp(pSub, "soundfont") == 0 && Msg.nArgs >= 1 &&
+		         Msg.Args[0].Type == TOSCArgType::Int32)
+		{
+			SetSoundFontIndex(static_cast<size_t>(Msg.Args[0].i));
+		}
+		else if (strncmp(pSub, "sequencer/", 10) == 0)
+		{
+			const char* pCmd = pSub + 10;
+
+			if (strcmp(pCmd, "play") == 0 && Msg.nArgs >= 1 &&
+			    Msg.Args[0].Type == TOSCArgType::String)
+				SequencerPlayFile(Msg.Args[0].s);
+			else if (strcmp(pCmd, "stop") == 0)
+				SequencerStop();
+			else if (strcmp(pCmd, "pause") == 0)
+				SequencerPause();
+			else if (strcmp(pCmd, "resume") == 0)
+				SequencerResume();
+			else if (strcmp(pCmd, "next") == 0)
+				SequencerNext();
+			else if (strcmp(pCmd, "prev") == 0)
+				SequencerPrev();
+		}
+	}
+}
+
 bool CMT32Pi::ParseCustomSysEx(const u8* pData, size_t nSize)
 {
 	if (nSize < 4)
@@ -2159,6 +2270,21 @@ void CMT32Pi::UpdateNetwork()
 			}
 			else
 				LOGNOTE("UDP MIDI receiver initialized");
+		}
+
+		if (m_pConfig->NetworkOSC && !m_pOSCReceiver)
+		{
+			const int nRequestedPort = m_pConfig->NetworkOSCPort;
+			const u16 nPort = static_cast<u16>(Utility::Clamp(nRequestedPort, 1, 65535));
+			m_pOSCReceiver = new COSCReceiver(this, nPort);
+			if (!m_pOSCReceiver->Initialize())
+			{
+				LOGERR("Failed to init OSC receiver");
+				delete m_pOSCReceiver;
+				m_pOSCReceiver = nullptr;
+			}
+			else
+				LOGNOTE("OSC receiver listening on port %d", static_cast<int>(nPort));
 		}
 
 		if (m_pConfig->NetworkFTPServer && !m_pFTPDaemon)

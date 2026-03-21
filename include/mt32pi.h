@@ -58,6 +58,7 @@
 #include "net/applemidi.h"
 #include "net/ftpdaemon.h"
 #include "net/udpmidi.h"
+#include "net/oscdaemon.h"
 #include "net/webdaemon.h"
 #include "net/websocketdaemon.h"
 #include "pisound.h"
@@ -76,7 +77,7 @@
 
 //#define MONITOR_TEMPERATURE
 
-class CMT32Pi : CMultiCoreSupport, CPower, CMIDIParser, CAppleMIDIHandler, CUDPMIDIHandler
+class CMT32Pi : CMultiCoreSupport, CPower, CMIDIParser, CAppleMIDIHandler, CUDPMIDIHandler, COSCHandler
 {
 public:
 	CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSystem* pInterrupt, CGPIOManager* pGPIOManager, CSerialDevice* pSerialDevice, CUSBHCIDevice* pUSBHCI);
@@ -397,6 +398,9 @@ private:
 	// CUDPMIDIHandler
 	virtual void OnUDPMIDIDataReceived(const u8* pData, size_t nSize) override { ParseMIDIBytes(pData, nSize); };
 
+	// COSCHandler
+	virtual void OnOSCMessage(const TOSCMessage& Msg) override;
+
 	// Initialization
 	bool InitNetwork();
 	bool InitMT32Synth();
@@ -454,6 +458,7 @@ private:
 	bool m_bNetworkReady;
 	CAppleMIDIParticipant* m_pAppleMIDIParticipant;
 	CUDPMIDIReceiver* m_pUDPMIDIReceiver;
+	COSCReceiver*     m_pOSCReceiver;
 	CFTPDaemon* m_pFTPDaemon;
 	CWebDaemon* m_pWebDaemon;
 	CWebSocketDaemon* m_pWebSocketDaemon;

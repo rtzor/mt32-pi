@@ -33,6 +33,8 @@ SRCS      = test_main.cpp \
             ../src/midirecorder.cpp \
             test_playlist.cpp \
             ../src/playlist.cpp \
+            test_osc.cpp \
+            ../src/net/oscdaemon.cpp \
             stubs/fluidsynth_stub.cpp \
             stubs/fatfs_stub.cpp
 
