@@ -2060,6 +2060,26 @@ void CMT32Pi::OnOSCMessage(const TOSCMessage& Msg)
 		{
 			SetMasterVolume(Msg.Args[0].i);
 		}
+		else if (strcmp(pSub, "mt32_volume") == 0 && Msg.nArgs >= 1 &&
+		         Msg.Args[0].Type == TOSCArgType::Int32)
+		{
+			SetMixerEngineVolume("mt32", Msg.Args[0].i);
+		}
+		else if (strcmp(pSub, "fluid_volume") == 0 && Msg.nArgs >= 1 &&
+		         Msg.Args[0].Type == TOSCArgType::Int32)
+		{
+			SetMixerEngineVolume("fluidsynth", Msg.Args[0].i);
+		}
+		else if (strcmp(pSub, "mt32_pan") == 0 && Msg.nArgs >= 1 &&
+		         Msg.Args[0].Type == TOSCArgType::Int32)
+		{
+			SetMixerEnginePan("mt32", Msg.Args[0].i);
+		}
+		else if (strcmp(pSub, "fluid_pan") == 0 && Msg.nArgs >= 1 &&
+		         Msg.Args[0].Type == TOSCArgType::Int32)
+		{
+			SetMixerEnginePan("fluidsynth", Msg.Args[0].i);
+		}
 		else if (strcmp(pSub, "synth") == 0 && Msg.nArgs >= 1 &&
 		         Msg.Args[0].Type == TOSCArgType::String)
 		{

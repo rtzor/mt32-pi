@@ -50,7 +50,11 @@ Los canales van de **0 a 15** (canal MIDI 1 = 0).
 
 | Dirección | Tipos | Descripción |
 |---|---|---|
-| `/mt32pi/volume` | `i` 0–127 | Volumen maestro |
+| `/mt32pi/volume` | `i` 0–100 | Volumen maestro (ambos engines) |
+| `/mt32pi/mt32_volume` | `i` 0–100 | Volumen del engine MT-32 (solo modo dual) |
+| `/mt32pi/fluid_volume` | `i` 0–100 | Volumen del engine FluidSynth (solo modo dual) |
+| `/mt32pi/mt32_pan` | `i` -100–100 | Pan del engine MT-32 (-100=izq, 0=centro, 100=der) |
+| `/mt32pi/fluid_pan` | `i` -100–100 | Pan del engine FluidSynth (-100=izq, 0=centro, 100=der) |
 | `/mt32pi/synth` | `s` | Cambiar sintetizador activo: `"mt32"` o `"soundfont"` |
 | `/mt32pi/soundfont` | `i` | Cambiar SoundFont por índice |
 | `/mt32pi/sequencer/play` | `s` filename | Cargar y reproducir archivo MIDI de la SD |
@@ -65,8 +69,16 @@ Los canales van de **0 a 15** (canal MIDI 1 = 0).
 ## Ejemplos con `oscsend`
 
 ```bash
-# Volumen maestro al 80%
+# Volumen maestro al 80% (afecta a ambos engines)
 oscsend 192.168.1.88 8000 /mt32pi/volume i 80
+
+# Volumen individual por engine (modo dual)
+oscsend 192.168.1.88 8000 /mt32pi/mt32_volume i 70
+oscsend 192.168.1.88 8000 /mt32pi/fluid_volume i 100
+
+# Pan individual (modo dual): -100=izq, 0=centro, 100=der
+oscsend 192.168.1.88 8000 /mt32pi/mt32_pan i -50
+oscsend 192.168.1.88 8000 /mt32pi/fluid_pan i 50
 
 # Note On en canal 0, nota C4 (60), velocidad 100
 oscsend 192.168.1.88 8000 /midi/note_on i 0 i 60 i 100
