@@ -3065,6 +3065,7 @@ html.Append("var cpu=d.cpu_load;document.getElementById('mx-cpu').textContent=cp
 		html.Append("var fxDamp=document.getElementById('mx-fx-damp');if(fxDamp){fxDamp.value=d.fx_reverb_damp;document.getElementById('mx-fx-damp-val').textContent=d.fx_reverb_damp;}");
 		html.Append("var fxWet=document.getElementById('mx-fx-wet');if(fxWet){fxWet.value=d.fx_reverb_wet;document.getElementById('mx-fx-wet-val').textContent=d.fx_reverb_wet;}");
 		html.Append("var mxThru=document.getElementById('mx-midi-thru');if(mxThru)mxThru.value=d.midi_thru_enabled?'on':'off';");
+		html.Append("if(d.channels)renderChannels(d.channels);});}loadStatus();setInterval(loadStatus,5000);");
 		// WebSocket for real-time channel meters
 		html.Append("var _mxLv=new Array(16).fill(0),_mxPk=new Array(16).fill(0),_mxPa=new Array(16).fill(-9999);");
 		html.Append("var _mxTgt=new Array(16).fill(0),_mxPt=new Array(16).fill(0);");
@@ -3444,7 +3445,7 @@ THTTPStatus CWebDaemon::BuildSoundPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("<label>Polyphony <input id='rt_sf_polyphony' type='number' min='1' max='512' value='200'></label>");
 		html.Append("<label>Channel types<div id='sf_chtypes' style='display:flex;gap:3px;flex-wrap:wrap;margin-top:4px;'></div></label>");
 		html.Append("</div><div id='rtStatus' style='margin-top:10px;color:#86efac;'></div></section>");
-		html.Append("<script>const rs=document.getElementById('rtStatus'));"
+		html.Append("<script>const rs=document.getElementById('rtStatus');"
 			"const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};"
 			"const setDisabled=(id,b)=>{const e=document.getElementById(id);if(e)e.disabled=!!b;};"
 			"const setSectionHidden=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('section-hidden',!!b);};"
