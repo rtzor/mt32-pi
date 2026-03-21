@@ -1776,6 +1776,8 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		char NetworkFTPPassword[64];
 		char NetworkWeb[16];
 		char NetworkWebPort[16];
+		char NetworkOSC[16];
+		char NetworkOSCPort[16];
 
 		if (!GetFormValue(pFormData, "default_synth", DefaultSynth, sizeof(DefaultSynth))
 		 || !GetFormValue(pFormData, "system_verbose", SystemVerbose, sizeof(SystemVerbose))
@@ -1832,7 +1834,9 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		 || !GetFormValue(pFormData, "network_ftp_username", NetworkFTPUsername, sizeof(NetworkFTPUsername))
 		 || !GetFormValue(pFormData, "network_ftp_password", NetworkFTPPassword, sizeof(NetworkFTPPassword))
 		 || !GetFormValue(pFormData, "network_web", NetworkWeb, sizeof(NetworkWeb))
-		 || !GetFormValue(pFormData, "network_web_port", NetworkWebPort, sizeof(NetworkWebPort)))
+		 || !GetFormValue(pFormData, "network_web_port", NetworkWebPort, sizeof(NetworkWebPort))
+		 || !GetFormValue(pFormData, "network_osc", NetworkOSC, sizeof(NetworkOSC))
+		 || !GetFormValue(pFormData, "network_osc_port", NetworkOSCPort, sizeof(NetworkOSCPort)))
 		{
 			return HTTPBadRequest;
 		}
@@ -1893,6 +1897,8 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		CString ParsedFTPPassword;
 		bool ParsedWeb = false;
 		int ParsedWebPort = 0;
+		bool ParsedOSC = false;
+		int ParsedOSCPort = 0;
 
 		if (!CConfig::ParseOption(DefaultSynth, &ParsedDefaultSynth)
 		 || !CConfig::ParseOption(SystemVerbose, &ParsedSystemVerbose)
@@ -1949,7 +1955,9 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		 || !CConfig::ParseOption(NetworkFTPUsername, &ParsedFTPUsername)
 		 || !CConfig::ParseOption(NetworkFTPPassword, &ParsedFTPPassword)
 		 || !CConfig::ParseOption(NetworkWeb, &ParsedWeb)
-		 || !CConfig::ParseOption(NetworkWebPort, &ParsedWebPort))
+		 || !CConfig::ParseOption(NetworkWebPort, &ParsedWebPort)
+		 || !CConfig::ParseOption(NetworkOSC, &ParsedOSC)
+		 || !CConfig::ParseOption(NetworkOSCPort, &ParsedOSCPort))
 		{
 			return HTTPBadRequest;
 		}
@@ -2011,6 +2019,8 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 			{TConfigSection::Network,    "ftp_password",     NetworkFTPPassword,        false},
 			{TConfigSection::Network,    "web",              NetworkWeb,                false},
 			{TConfigSection::Network,    "web_port",         NetworkWebPort,            false},
+			{TConfigSection::Network,    "osc",              NetworkOSC,                false},
+			{TConfigSection::Network,    "osc_port",         NetworkOSCPort,            false},
 		};
 
 		CString SaveError;
@@ -2326,6 +2336,8 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		AppendJSONPair(JSON, "ip",                st.IPAddress);
 		AppendJSONPair(JSON, "hostname",          pConfig->NetworkHostname);
 		AppendJSONPairInt(JSON, "web_port",       pConfig->NetworkWebServerPort);
+		AppendJSONPairBool(JSON, "osc",           pConfig->NetworkOSC);
+		AppendJSONPairInt(JSON, "osc_port",       pConfig->NetworkOSCPort);
 		AppendJSONPair(JSON, "mt32_rom_name",     st.pMT32ROMName);
 		AppendJSONPair(JSON, "soundfont_name",    st.pSoundFontName);
 		AppendJSONPair(JSON, "soundfont_path",    st.pSoundFontPath);
@@ -3654,6 +3666,9 @@ THTTPStatus CWebDaemon::BuildConfigPage(u8* pBuffer, unsigned* pLength, const ch
 		html.Append("<label>FTP password<small>FTP server password. Default: mt32-pi</small><input name='network_ftp_password' type='password' value='"); AppendEscaped(html, pConfig->NetworkFTPPassword); html.Append("'></label>");
 		html.Append("<label>Web<select name='network_web'><option value='on'"); html.Append(SelectedAttr(pConfig->NetworkWebServer)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->NetworkWebServer)); html.Append(">off</option></select></label>");
 		html.Append("<label>Web port<small>TCP port for the web server. Default: 80. Restart to apply changes.</small><input name='network_web_port' type='number' value='"); AppendEscaped(html, WebPort); html.Append("'></label>");
+		CString OSCPort; OSCPort.Format("%d", pConfig->NetworkOSCPort);
+		html.Append("<label>OSC<small>on: enable OSC (Open Sound Control) UDP server for MIDI and control messages.</small><select name='network_osc'><option value='on'"); html.Append(SelectedAttr(pConfig->NetworkOSC)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->NetworkOSC)); html.Append(">off</option></select></label>");
+		html.Append("<label>OSC port<small>UDP port for the OSC server. Default: 8000. Restart to apply changes.</small><input name='network_osc_port' type='number' value='"); AppendEscaped(html, OSCPort); html.Append("'></label>");
 		html.Append("</div></section>");
 
 		html.Append("<section id='wifi-section' class='section-hidden'><h2>WiFi</h2><p>Credentials for connecting to a wireless network. Saved to <code>wpa_supplicant.conf</code>.</p>");
@@ -3734,6 +3749,8 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	AppendRow(html, "FTP", BoolText(pConfig->NetworkFTPServer));
 	AppendRow(html, "Web", BoolText(pConfig->NetworkWebServer));
 	AppendIntRow(html, "Web port", pConfig->NetworkWebServerPort);
+	AppendRow(html, "OSC", BoolText(pConfig->NetworkOSC));
+	AppendIntRow(html, "OSC port", pConfig->NetworkOSCPort);
 	AppendSectionEnd(html);
 
 	AppendSectionStart(html, "Audio & control");
