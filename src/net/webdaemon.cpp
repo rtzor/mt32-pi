@@ -41,6 +41,42 @@ namespace
 	constexpr u16 DefaultPort = 80;
 	constexpr unsigned MaxContentSize = 32768;
 
+	// Zero-allocation HTML builder — writes directly into the pre-allocated HTTP
+	// response buffer provided by Circle's HTTP daemon.  Every Append() is a
+	// single memcpy with no heap involvement, replacing the CString pattern that
+	// called new[]+delete[] on every operator+= (O(n²) copies per page).
+	struct HtmlWriter
+	{
+		char* const pStart;
+		char*       pCur;
+		char* const pEnd;
+		bool        bOk;
+
+		HtmlWriter(u8* pBuf, unsigned nCap)
+			: pStart(reinterpret_cast<char*>(pBuf))
+			, pCur(pStart)
+			, pEnd(pStart + nCap)
+			, bOk(true) {}
+
+		void Append(const char* pStr)
+		{
+			if (!bOk || !pStr) return;
+			const unsigned n = static_cast<unsigned>(std::strlen(pStr));
+			if (pCur + n > pEnd) { bOk = false; return; }
+			memcpy(pCur, pStr, n);
+			pCur += n;
+		}
+
+		void AppendChar(char c)
+		{
+			if (!bOk) return;
+			if (pCur >= pEnd) { bOk = false; return; }
+			*pCur++ = c;
+		}
+
+		unsigned Length() const { return static_cast<unsigned>(pCur - pStart); }
+	};
+
 	constexpr const char* ConfigPath       = "SD:mt32-pi.cfg";
 	constexpr const char* ConfigTempPath   = "SD:mt32-pi.cfg.new";
 	constexpr const char* ConfigBackupPath = "SD:mt32-pi.cfg.bak";
@@ -204,11 +240,11 @@ namespace
 		return bSelected ? " selected" : "";
 	}
 
-	void AppendEscaped(CString& Out, const char* pText)
+	void AppendEscaped(HtmlWriter& Out, const char* pText)
 	{
 		if (!pText)
 		{
-			Out += "-";
+			Out.Append("-");
 			return;
 		}
 
@@ -217,57 +253,57 @@ namespace
 			switch (*pCurrent)
 			{
 				case '&':
-					Out += "&amp;";
+					Out.Append("&amp;");
 					break;
 				case '<':
-					Out += "&lt;";
+					Out.Append("&lt;");
 					break;
 				case '>':
-					Out += "&gt;";
+					Out.Append("&gt;");
 					break;
 				case '"':
-					Out += "&quot;";
+					Out.Append("&quot;");
 					break;
 				default:
-					Out += *pCurrent;
+					Out.AppendChar(*pCurrent);
 					break;
 			}
 		}
 	}
 
-	void AppendRow(CString& Out, const char* pLabel, const char* pValue)
+	void AppendRow(HtmlWriter& Out, const char* pLabel, const char* pValue)
 	{
-		Out += "<tr><th>";
+		Out.Append("<tr><th>");
 		AppendEscaped(Out, pLabel);
-		Out += "</th><td>";
+		Out.Append("</th><td>");
 		AppendEscaped(Out, pValue);
-		Out += "</td></tr>";
+		Out.Append("</td></tr>");
 	}
 
-	void AppendIntRow(CString& Out, const char* pLabel, int nValue)
+	void AppendIntRow(HtmlWriter& Out, const char* pLabel, int nValue)
 	{
 		CString Value;
 		Value.Format("%d", nValue);
 		AppendRow(Out, pLabel, Value);
 	}
 
-	void AppendFloatRow(CString& Out, const char* pLabel, float nValue)
+	void AppendFloatRow(HtmlWriter& Out, const char* pLabel, float nValue)
 	{
 		CString Value;
 		Value.Format("%.2f", nValue);
 		AppendRow(Out, pLabel, Value);
 	}
 
-	void AppendSectionStart(CString& Out, const char* pTitle)
+	void AppendSectionStart(HtmlWriter& Out, const char* pTitle)
 	{
-		Out += "<section><h2>";
+		Out.Append("<section><h2>");
 		AppendEscaped(Out, pTitle);
-		Out += "</h2><table>";
+		Out.Append("</h2><table>");
 	}
 
-	void AppendSectionEnd(CString& Out)
+	void AppendSectionEnd(HtmlWriter& Out)
 	{
-		Out += "</table></section>";
+		Out.Append("</table></section>");
 	}
 
 	void AppendJSONEscaped(CString& Out, const char* pText)
@@ -2639,541 +2675,533 @@ THTTPStatus CWebDaemon::BuildScript(u8* pBuffer, unsigned* pLength, const char**
 
 THTTPStatus CWebDaemon::BuildSequencerPage(u8* pBuffer, unsigned* pLength, const char** ppContentType)
 {
-		CString HTML;
-		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
-		HTML += "<title>mt32-pi sequencer</title><link rel='stylesheet' href='/app.css'>";
-		HTML += "<style>";
-		HTML += "#np{background:linear-gradient(135deg,#0d1b35,#111827);border:1px solid #1d4ed8;border-radius:14px;padding:18px 20px;margin-bottom:14px;}";
-		HTML += ".np-f{font-size:16px;font-weight:700;color:#f8fafc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:8px 0 14px;}";
-		HTML += ".stp{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}";
-		HTML += ".stp span{background:#0a1020;border:1px solid #1e3a5f;border-radius:999px;padding:4px 13px;font-size:12px;color:#64748b;}";
-		HTML += ".stp strong{color:#93c5fd;}";
-		HTML += "#pb{cursor:pointer;height:14px;margin:12px 0 4px;}";
-		HTML += ".tmr{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;}";
-		HTML += ".tmr .lbl{color:#94a3b8;font-size:13px;}";
-		HTML += ".tmv{font-size:15px;font-weight:700;color:#93c5fd;min-width:54px;text-align:center;}";
-		HTML += "</style></head><body><main>";
-		HTML += "<script src='/app.js'></script>";
-		HTML += "<h1>MIDI Sequencer</h1>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
+		HtmlWriter html(pBuffer, *pLength);
+		html.Append("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+		html.Append("<title>mt32-pi sequencer</title><link rel='stylesheet' href='/app.css'>");
+		html.Append("<style>");
+		html.Append("#np{background:linear-gradient(135deg,#0d1b35,#111827);border:1px solid #1d4ed8;border-radius:14px;padding:18px 20px;margin-bottom:14px;}");
+		html.Append(".np-f{font-size:16px;font-weight:700;color:#f8fafc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:8px 0 14px;}");
+		html.Append(".stp{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}");
+		html.Append(".stp span{background:#0a1020;border:1px solid #1e3a5f;border-radius:999px;padding:4px 13px;font-size:12px;color:#64748b;}");
+		html.Append(".stp strong{color:#93c5fd;}");
+		html.Append("#pb{cursor:pointer;height:14px;margin:12px 0 4px;}");
+		html.Append(".tmr{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;}");
+		html.Append(".tmr .lbl{color:#94a3b8;font-size:13px;}");
+		html.Append(".tmv{font-size:15px;font-weight:700;color:#93c5fd;min-width:54px;text-align:center;}");
+		html.Append("</style></head><body><main>");
+		html.Append("<script src='/app.js'></script>");
+		html.Append("<h1>MIDI Sequencer</h1>");
+		html.Append("<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>");
 		// Now Playing card
-		HTML += "<div id='np'>";
-		HTML += "<div style='display:flex;align-items:center;gap:10px;'>";
-		HTML += "<span id='seq-badge' class='badge'>Stopped</span>";
-		HTML += "<span style='color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.06em;'>Now Playing</span>";
-		HTML += "</div>";
-		HTML += "<div class='np-f' id='seq-cur-file'>&#8212;</div>";
-		HTML += "<div id='pb' class='prog-bg' onclick='seekClick(event,this)'>";
-		HTML += "<div id='prog' class='prog-fill' style='height:100%;pointer-events:none;'></div></div>";
-		HTML += "<div style='display:flex;justify-content:space-between;font-size:12px;color:#475569;margin-top:2px;'>";
-		HTML += "<span id='seq-elapsed'>0:00</span><span id='seq-duration'>0:00</span></div>";
-		HTML += "<div class='stp'>";
-		HTML += "<span>&#9835;&nbsp;<strong id='seq-bpm'>&#8212;</strong>&nbsp;BPM</span>";
-		HTML += "<span><strong id='seq-ppqn'>&#8212;</strong>&nbsp;PPQN</span>";
-		HTML += "<span>Tempo&nbsp;<strong id='seq-tempo'>1.00&#215;</strong></span>";
-		HTML += "<span>Tick&nbsp;<strong id='seq-tick'>&#8212;</strong></span>";
-		HTML += "<span><strong id='seq-size'>&#8212;</strong>&nbsp;KB</span>";
-		HTML += "</div></div>";
+		html.Append("<div id='np'>");
+		html.Append("<div style='display:flex;align-items:center;gap:10px;'>");
+		html.Append("<span id='seq-badge' class='badge'>Stopped</span>");
+		html.Append("<span style='color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.06em;'>Now Playing</span>");
+		html.Append("</div>");
+		html.Append("<div class='np-f' id='seq-cur-file'>&#8212;</div>");
+		html.Append("<div id='pb' class='prog-bg' onclick='seekClick(event,this)'>");
+		html.Append("<div id='prog' class='prog-fill' style='height:100%;pointer-events:none;'></div></div>");
+		html.Append("<div style='display:flex;justify-content:space-between;font-size:12px;color:#475569;margin-top:2px;'>");
+		html.Append("<span id='seq-elapsed'>0:00</span><span id='seq-duration'>0:00</span></div>");
+		html.Append("<div class='stp'>");
+		html.Append("<span>&#9835;&nbsp;<strong id='seq-bpm'>&#8212;</strong>&nbsp;BPM</span>");
+		html.Append("<span><strong id='seq-ppqn'>&#8212;</strong>&nbsp;PPQN</span>");
+		html.Append("<span>Tempo&nbsp;<strong id='seq-tempo'>1.00&#215;</strong></span>");
+		html.Append("<span>Tick&nbsp;<strong id='seq-tick'>&#8212;</strong></span>");
+		html.Append("<span><strong id='seq-size'>&#8212;</strong>&nbsp;KB</span>");
+		html.Append("</div></div>");
 		// Transport section
-		HTML += "<section><h2>Transport</h2>";
-		HTML += "<div style='display:flex;gap:8px;flex-wrap:wrap;'>";
-		HTML += "<button onclick='doPrev()' title='Previous file'>&#9664;&#9664;</button>";
-		HTML += "<button class='primary' id='play-btn' onclick='doPlay()'>&#9654; Play</button>";
-		HTML += "<button id='pause-btn' onclick='doPauseResume()' style='display:none;'>&#9646;&#9646; Pause</button>";
-		HTML += "<button class='danger' onclick='doStop()'>&#9646; Stop</button>";
-		HTML += "<button onclick='doNext()' title='Next file'>&#9654;&#9654;</button>";
-		HTML += "<button id='seq-loop-btn' onclick='toggleLoop()' title='Loop: OFF'>&#8635; Loop</button>";
-		HTML += "<button id='seq-autonext-btn' onclick='toggleAutoNext()' title='Auto-next: OFF'>&#9658;&#9658; Auto-next</button>";
-		HTML += "</div>";
-		HTML += "<div class='tmr'>";
-		HTML += "<span class='lbl'>Tempo</span>";
-		HTML += "<button onclick='adjTempo(-0.1)' style='width:30px;padding:5px 0;text-align:center;'>&#8722;</button>";
-		HTML += "<span class='tmv' id='seq-tmv'>1.00&#215;</span>";
-		HTML += "<button onclick='adjTempo(0.1)' style='width:30px;padding:5px 0;text-align:center;'>+</button>";
-		HTML += "<button onclick='adjTempo(0)' style='padding:5px 10px;font-size:12px;'>1&#215; Reset</button>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>Transport</h2>");
+		html.Append("<div style='display:flex;gap:8px;flex-wrap:wrap;'>");
+		html.Append("<button onclick='doPrev()' title='Previous file'>&#9664;&#9664;</button>");
+		html.Append("<button class='primary' id='play-btn' onclick='doPlay()'>&#9654; Play</button>");
+		html.Append("<button id='pause-btn' onclick='doPauseResume()' style='display:none;'>&#9646;&#9646; Pause</button>");
+		html.Append("<button class='danger' onclick='doStop()'>&#9646; Stop</button>");
+		html.Append("<button onclick='doNext()' title='Next file'>&#9654;&#9654;</button>");
+		html.Append("<button id='seq-loop-btn' onclick='toggleLoop()' title='Loop: OFF'>&#8635; Loop</button>");
+		html.Append("<button id='seq-autonext-btn' onclick='toggleAutoNext()' title='Auto-next: OFF'>&#9658;&#9658; Auto-next</button>");
+		html.Append("</div>");
+		html.Append("<div class='tmr'>");
+		html.Append("<span class='lbl'>Tempo</span>");
+		html.Append("<button onclick='adjTempo(-0.1)' style='width:30px;padding:5px 0;text-align:center;'>&#8722;</button>");
+		html.Append("<span class='tmv' id='seq-tmv'>1.00&#215;</span>");
+		html.Append("<button onclick='adjTempo(0.1)' style='width:30px;padding:5px 0;text-align:center;'>+</button>");
+		html.Append("<button onclick='adjTempo(0)' style='padding:5px 10px;font-size:12px;'>1&#215; Reset</button>");
+		html.Append("</div></section>");
 		// File section
-		HTML += "<section><h2>File</h2><div class='grid'>";
-		HTML += "<label>MIDI file<select id='seq-file'><option value=''>Loading...</option></select></label></div>";
-		HTML += "<div style='margin-top:10px;'><button onclick='loadFiles()' style='font-size:12px;'>&#8635; Refresh list</button></div></section>";
+		html.Append("<section><h2>File</h2><div class='grid'>");
+		html.Append("<label>MIDI file<select id='seq-file'><option value=''>Loading...</option></select></label></div>");
+		html.Append("<div style='margin-top:10px;'><button onclick='loadFiles()' style='font-size:12px;'>&#8635; Refresh list</button></div></section>");
 		// Playlist section
-		HTML += "<section><h2>Playlist <span id='pl-count' style='font-size:12px;color:#64748b;'></span></h2>";
-		HTML += "<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;'>";
-		HTML += "<button id='pl-shuffle-btn' onclick='togglePlShuffle()' title='Shuffle: OFF'>&#128256; Shuffle</button>";
-		HTML += "<button id='pl-repeat-btn'  onclick='togglePlRepeat()'  title='Repeat: OFF'>&#8635; Repeat</button>";
-		HTML += "<button class='primary' onclick='plAdd()'>+ Add to queue</button>";
-		HTML += "<button onclick='plAddAll()'>+ Add all files</button>";
-		HTML += "<button class='danger'  onclick='plClear()'>&#10006; Clear</button>";
-		HTML += "</div>";
-		HTML += "<div id='pl-list'><em style='color:#64748b;'>Queue empty</em></div>";
-		HTML += "</section>";
-		HTML += "<script>";
+		html.Append("<section><h2>Playlist <span id='pl-count' style='font-size:12px;color:#64748b;'></span></h2>");
+		html.Append("<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;'>");
+		html.Append("<button id='pl-shuffle-btn' onclick='togglePlShuffle()' title='Shuffle: OFF'>&#128256; Shuffle</button>");
+		html.Append("<button id='pl-repeat-btn'  onclick='togglePlRepeat()'  title='Repeat: OFF'>&#8635; Repeat</button>");
+		html.Append("<button class='primary' onclick='plAdd()'>+ Add to queue</button>");
+		html.Append("<button onclick='plAddAll()'>+ Add all files</button>");
+		html.Append("<button class='danger'  onclick='plClear()'>&#10006; Clear</button>");
+		html.Append("</div>");
+		html.Append("<div id='pl-list'><em style='color:#64748b;'>Queue empty</em></div>");
+		html.Append("</section>");
+		html.Append("<script>");
 		// State variables
-		HTML += "var _wsOk=false,_ls={},_ct=1.0;";
-		HTML += "var _lElp=0,_lDur=1,_lTime=0,_interp=null;";
-		HTML += "var _plCnt=-1,_plShuffle=false,_plRepeat=false;";
+		html.Append("var _wsOk=false,_ls={},_ct=1.0;");
+		html.Append("var _lElp=0,_lDur=1,_lTime=0,_interp=null;");
+		html.Append("var _plCnt=-1,_plShuffle=false,_plRepeat=false;");
 		// Progress bar update helpers
-		HTML += "function _updBar(elp,dur){";
-		HTML += "document.getElementById('prog').style.width=Math.min(100,elp/dur*100).toFixed(1)+'%';";
-		HTML += "document.getElementById('seq-elapsed').textContent=fmt(elp);}";
-		HTML += "function _startInterp(){";
-		HTML += "_interp=setInterval(function(){";
-		HTML += "var est=Math.min(_lDur,_lElp+(Date.now()-_lTime)*_ct);";
-		HTML += "_updBar(est,_lDur);";
-		HTML += "},150);}";
+		html.Append("function _updBar(elp,dur){");
+		html.Append("document.getElementById('prog').style.width=Math.min(100,elp/dur*100).toFixed(1)+'%';");
+		html.Append("document.getElementById('seq-elapsed').textContent=fmt(elp);}");
+		html.Append("function _startInterp(){");
+		html.Append("_interp=setInterval(function(){");
+		html.Append("var est=Math.min(_lDur,_lElp+(Date.now()-_lTime)*_ct);");
+		html.Append("_updBar(est,_lDur);");
+		html.Append("},150);}");
 		// applyStatus
-		HTML += "function applyStatus(d){if(!d)return;_ls=d;";
-		HTML += "var b=document.getElementById('seq-badge');";
-		HTML += "var st=d.loading?'loading':(d.paused?'paused':(d.playing?'playing':(d.finished?'finished':'stopped')));";
-		HTML += "b.textContent=st==='loading'?'Loading\u2026':(st==='playing'?'Playing':(st==='paused'?'Paused':(st==='finished'?'Finished':'Stopped')));";
-		HTML += "b.className='badge'+(st==='playing'?' playing':(st==='finished'?' finished':(st==='loading'?' loading':'')));";
-		HTML += "var fn=(d.file||'').replace(/^(SD:|USB:)/,'');";
-		HTML += "document.getElementById('seq-cur-file').textContent=fn||'\\u2014';";
+		html.Append("function applyStatus(d){if(!d)return;_ls=d;");
+		html.Append("var b=document.getElementById('seq-badge');");
+		html.Append("var st=d.loading?'loading':(d.paused?'paused':(d.playing?'playing':(d.finished?'finished':'stopped')));");
+		html.Append("b.textContent=st==='loading'?'Loading\u2026':(st==='playing'?'Playing':(st==='paused'?'Paused':(st==='finished'?'Finished':'Stopped')));");
+		html.Append("b.className='badge'+(st==='playing'?' playing':(st==='finished'?' finished':(st==='loading'?' loading':'')));");
+		html.Append("var fn=(d.file||'').replace(/^(SD:|USB:)/,'');");
+		html.Append("document.getElementById('seq-cur-file').textContent=fn||'\\u2014';");
 		// Pause/Resume button visibility
-		HTML += "var pb=document.getElementById('pause-btn'),plb=document.getElementById('play-btn');";
-		HTML += "if(pb&&plb){if(st==='playing'){pb.style.display='';pb.textContent='\\u23F8 Pause';}";
-		HTML += "else if(st==='paused'){pb.style.display='';pb.textContent='\\u25B6 Resume';}";
-		HTML += "else{pb.style.display='none';}}";
-		HTML += "var autob=document.getElementById('seq-autonext-btn');";
-		HTML += "if(autob){autob.className=d.auto_next?'loop-on':'';autob.title=d.auto_next?'Auto-next: ON':'Auto-next: OFF';}";
+		html.Append("var pb=document.getElementById('pause-btn'),plb=document.getElementById('play-btn');");
+		html.Append("if(pb&&plb){if(st==='playing'){pb.style.display='';pb.textContent='\\u23F8 Pause';}");
+		html.Append("else if(st==='paused'){pb.style.display='';pb.textContent='\\u25B6 Resume';}");
+		html.Append("else{pb.style.display='none';}}");
+		html.Append("var autob=document.getElementById('seq-autonext-btn');");
+		html.Append("if(autob){autob.className=d.auto_next?'loop-on':'';autob.title=d.auto_next?'Auto-next: ON':'Auto-next: OFF';}");
 		// Sync bar from server data
-		HTML += "var dur=d.duration_ms>0?d.duration_ms:1;";
-		HTML += "var elp=st==='finished'?dur:(d.elapsed_ms||0);";
-		HTML += "document.getElementById('seq-duration').textContent=fmt(d.duration_ms||0);";
+		html.Append("var dur=d.duration_ms>0?d.duration_ms:1;");
+		html.Append("var elp=st==='finished'?dur:(d.elapsed_ms||0);");
+		html.Append("document.getElementById('seq-duration').textContent=fmt(d.duration_ms||0);");
 		// Update interpolation state
-		HTML += "if(d.tempo_multiplier!==undefined)_ct=d.tempo_multiplier;";
-		HTML += "_lElp=elp;_lDur=dur;_lTime=Date.now();";
+		html.Append("if(d.tempo_multiplier!==undefined)_ct=d.tempo_multiplier;");
+		html.Append("_lElp=elp;_lDur=dur;_lTime=Date.now();");
 		// Start/stop client-side interpolation
-		HTML += "if(_interp){clearInterval(_interp);_interp=null;}";
-		HTML += "if(st==='playing'){_updBar(elp,dur);_startInterp();}else{_updBar(elp,dur);}";
+		html.Append("if(_interp){clearInterval(_interp);_interp=null;}");
+		html.Append("if(st==='playing'){_updBar(elp,dur);_startInterp();}else{_updBar(elp,dur);}");
 		// BPM / PPQN / tempo / tick / size
-		HTML += "var bpm=d.bpm||0;document.getElementById('seq-bpm').textContent=bpm>0?bpm:'\\u2014';";
-		HTML += "var ppqn=d.division||0;document.getElementById('seq-ppqn').textContent=ppqn>0?ppqn:'\\u2014';";
-		HTML += "var tm=(_ct||1).toFixed(2)+'\\u00d7';";
-		HTML += "document.getElementById('seq-tempo').textContent=tm;";
-		HTML += "document.getElementById('seq-tmv').textContent=tm;";
-		HTML += "var ct=d.current_tick||0,tt=d.total_ticks||0;";
-		HTML += "document.getElementById('seq-tick').textContent=tt>0?(ct+' / '+tt):'\\u2014';";
-		HTML += "var sz=d.file_size_kb||0;document.getElementById('seq-size').textContent=sz>0?sz:'\\u2014';";
-		HTML += "var lb=document.getElementById('seq-loop-btn');";
-		HTML += "if(lb){lb.className=d.loop_enabled?'loop-on':'';lb.title=d.loop_enabled?'Loop: ON':'Loop: OFF';}";
+		html.Append("var bpm=d.bpm||0;document.getElementById('seq-bpm').textContent=bpm>0?bpm:'\\u2014';");
+		html.Append("var ppqn=d.division||0;document.getElementById('seq-ppqn').textContent=ppqn>0?ppqn:'\\u2014';");
+		html.Append("var tm=(_ct||1).toFixed(2)+'\\u00d7';");
+		html.Append("document.getElementById('seq-tempo').textContent=tm;");
+		html.Append("document.getElementById('seq-tmv').textContent=tm;");
+		html.Append("var ct=d.current_tick||0,tt=d.total_ticks||0;");
+		html.Append("document.getElementById('seq-tick').textContent=tt>0?(ct+' / '+tt):'\\u2014';");
+		html.Append("var sz=d.file_size_kb||0;document.getElementById('seq-size').textContent=sz>0?sz:'\\u2014';");
+		html.Append("var lb=document.getElementById('seq-loop-btn');");
+		html.Append("if(lb){lb.className=d.loop_enabled?'loop-on':'';lb.title=d.loop_enabled?'Loop: ON':'Loop: OFF';}");
 		// Playlist state update from WebSocket
-		HTML += "if(typeof d.pl_count!=='undefined'){";
-		HTML += "var pc=document.getElementById('pl-count');if(pc)pc.textContent=d.pl_count>0?'('+d.pl_count+' tracks)':'';";
-		HTML += "if(d.pl_count!==_plCnt){_plCnt=d.pl_count;loadPlaylist();}";
-		HTML += "else{var rows=document.querySelectorAll('#pl-list tr');rows.forEach(function(r,i){r.style.background=i===d.pl_idx?'#0f2744':'';r.style.borderLeft=i===d.pl_idx?'3px solid #1d4ed8':'none';});}";
-		HTML += "var sb=document.getElementById('pl-shuffle-btn');if(sb){sb.className=d.pl_shuffle?'loop-on':'';sb.title=d.pl_shuffle?'Shuffle: ON':'Shuffle: OFF';}";
-		HTML += "var rb=document.getElementById('pl-repeat-btn');if(rb){rb.className=d.pl_repeat?'loop-on':'';rb.title=d.pl_repeat?'Repeat: ON':'Repeat: OFF';}}";
-		HTML += "}"; // close applyStatus
+		html.Append("if(typeof d.pl_count!=='undefined'){");
+		html.Append("var pc=document.getElementById('pl-count');if(pc)pc.textContent=d.pl_count>0?'('+d.pl_count+' tracks)':'';");
+		html.Append("if(d.pl_count!==_plCnt){_plCnt=d.pl_count;loadPlaylist();}");
+		html.Append("else{var rows=document.querySelectorAll('#pl-list tr');rows.forEach(function(r,i){r.style.background=i===d.pl_idx?'#0f2744':'';r.style.borderLeft=i===d.pl_idx?'3px solid #1d4ed8':'none';});}");
+		html.Append("var sb=document.getElementById('pl-shuffle-btn');if(sb){sb.className=d.pl_shuffle?'loop-on':'';sb.title=d.pl_shuffle?'Shuffle: ON':'Shuffle: OFF';}");
+		html.Append("var rb=document.getElementById('pl-repeat-btn');if(rb){rb.className=d.pl_repeat?'loop-on':'';rb.title=d.pl_repeat?'Repeat: ON':'Repeat: OFF';}}");
+		html.Append("}"); // close applyStatus
 		// Poll fallback
-		HTML += "function schedPoll(){if(_wsOk)return;setTimeout(function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);if(!_wsOk)schedPoll();});},1000);}";
+		html.Append("function schedPoll(){if(_wsOk)return;setTimeout(function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);if(!_wsOk)schedPoll();});},1000);}");
 		// WebSocket
-		HTML += "(function(){var ws=null,_rt=0;";
-		HTML += "function wsConnect(){ws=new WebSocket('ws://'+location.hostname+':8765/');";
-		HTML += "ws.onopen=function(){_wsOk=true;};";
-		HTML += "ws.onmessage=function(e){try{applyStatus(JSON.parse(e.data));}catch(x){}};";
-		HTML += "ws.onclose=function(){_wsOk=false;schedPoll();_rt=Math.min((_rt||500)*2,8000);setTimeout(wsConnect,_rt);};";
-		HTML += "ws.onerror=function(){ws.close();};}";
-		HTML += "wsConnect();})();";
+		html.Append("(function(){var ws=null,_rt=0;");
+		html.Append("function wsConnect(){ws=new WebSocket('ws://'+location.hostname+':8765/');");
+		html.Append("ws.onopen=function(){_wsOk=true;};");
+		html.Append("ws.onmessage=function(e){try{applyStatus(JSON.parse(e.data));}catch(x){}};");
+		html.Append("ws.onclose=function(){_wsOk=false;schedPoll();_rt=Math.min((_rt||500)*2,8000);setTimeout(wsConnect,_rt);};");
+		html.Append("ws.onerror=function(){ws.close();};}");
+		html.Append("wsConnect();})();");
 		// Seek on progress bar click — note: server param is 'ticks' (plural)
-		HTML += "function seekClick(ev,el){var r=el.getBoundingClientRect();";
-		HTML += "var f=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));";
-		HTML += "var tt=(_ls&&_ls.total_ticks)||0;if(tt<=0)return;";
-		HTML += "var tk=Math.round(f*tt);";
+		html.Append("function seekClick(ev,el){var r=el.getBoundingClientRect();");
+		html.Append("var f=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));");
+		html.Append("var tt=(_ls&&_ls.total_ticks)||0;if(tt<=0)return;");
+		html.Append("var tk=Math.round(f*tt);");
 		// Optimistically update the bar immediately
-		HTML += "_lElp=Math.round(f*_lDur);_lTime=Date.now();";
-		HTML += "_qs('/api/sequencer/seek','ticks='+tk,function(){});}";
+		html.Append("_lElp=Math.round(f*_lDur);_lTime=Date.now();");
+		html.Append("_qs('/api/sequencer/seek','ticks='+tk,function(){});}");
 		// Tempo adjust
-		HTML += "function adjTempo(delta){var t=delta===0?1.0:Math.round(Math.max(0.1,Math.min(4.0,_ct+delta))*10)/10;";
-		HTML += "_qs('/api/sequencer/tempo','multiplier='+t,function(){";
-		HTML += "_ct=t;var lbl=t.toFixed(2)+'\\u00d7';";
-		HTML += "document.getElementById('seq-tempo').textContent=lbl;";
-		HTML += "document.getElementById('seq-tmv').textContent=lbl;});}";
+		html.Append("function adjTempo(delta){var t=delta===0?1.0:Math.round(Math.max(0.1,Math.min(4.0,_ct+delta))*10)/10;");
+		html.Append("_qs('/api/sequencer/tempo','multiplier='+t,function(){");
+		html.Append("_ct=t;var lbl=t.toFixed(2)+'\\u00d7';");
+		html.Append("document.getElementById('seq-tempo').textContent=lbl;");
+		html.Append("document.getElementById('seq-tmv').textContent=lbl;});}");
 		// File list
-		HTML += "function loadFiles(){var sel=document.getElementById('seq-file');sel.innerHTML='<option value=\"\">Loading...</option>';";
-		HTML += "_qs('/api/sequencer/files','',function(files){sel.innerHTML='';";
-		HTML += "if(!files||!files.length){sel.innerHTML='<option value=\"\">No MIDI files</option>';return;}";
-		HTML += "for(var i=0;i<files.length;i++){var o=document.createElement('option');o.value=files[i];";
-		HTML += "o.textContent=files[i].replace(/^(SD:|USB:)/,'');sel.appendChild(o);}});}";
+		html.Append("function loadFiles(){var sel=document.getElementById('seq-file');sel.innerHTML='<option value=\"\">Loading...</option>';");
+		html.Append("_qs('/api/sequencer/files','',function(files){sel.innerHTML='';");
+		html.Append("if(!files||!files.length){sel.innerHTML='<option value=\"\">No MIDI files</option>';return;}");
+		html.Append("for(var i=0;i<files.length;i++){var o=document.createElement('option');o.value=files[i];");
+		html.Append("o.textContent=files[i].replace(/^(SD:|USB:)/,'');sel.appendChild(o);}});}");
 		// Controls
-		HTML += "function doPlay(){var f=document.getElementById('seq-file').value;";
-		HTML += "if(!f){showToast('Select a file first.',false);return;}";
-		HTML += "_qs('/api/sequencer/play','file='+encodeURIComponent(f),function(j){if(!j||!j.ok)showToast('Play failed',false);});}";
-		HTML += "function doStop(){_qs('/api/sequencer/stop','',function(){});}";
-		HTML += "function doPauseResume(){var st=_ls&&_ls.paused;";
-		HTML += "_qs(st?'/api/sequencer/resume':'/api/sequencer/pause','',function(j){if(!j||!j.ok)showToast('Error',false);});}";
-		HTML += "function doNext(){_qs('/api/sequencer/next','',function(){});}";
-		HTML += "function doPrev(){_qs('/api/sequencer/prev','',function(){});}";
-		HTML += "function toggleLoop(){var lb=document.getElementById('seq-loop-btn');var lc=lb&&lb.className==='loop-on';";
-		HTML += "_qs('/api/sequencer/loop','enabled='+(lc?'off':'on'),function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);});});}";
-		HTML += "function toggleAutoNext(){var ab=document.getElementById('seq-autonext-btn');var ac=ab&&ab.className==='loop-on';";
-		HTML += "_qs('/api/sequencer/autonext','enabled='+(ac?'off':'on'),function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);});});}";
+		html.Append("function doPlay(){var f=document.getElementById('seq-file').value;");
+		html.Append("if(!f){showToast('Select a file first.',false);return;}");
+		html.Append("_qs('/api/sequencer/play','file='+encodeURIComponent(f),function(j){if(!j||!j.ok)showToast('Play failed',false);});}");
+		html.Append("function doStop(){_qs('/api/sequencer/stop','',function(){});}");
+		html.Append("function doPauseResume(){var st=_ls&&_ls.paused;");
+		html.Append("_qs(st?'/api/sequencer/resume':'/api/sequencer/pause','',function(j){if(!j||!j.ok)showToast('Error',false);});}");
+		html.Append("function doNext(){_qs('/api/sequencer/next','',function(){});}");
+		html.Append("function doPrev(){_qs('/api/sequencer/prev','',function(){});}");
+		html.Append("function toggleLoop(){var lb=document.getElementById('seq-loop-btn');var lc=lb&&lb.className==='loop-on';");
+		html.Append("_qs('/api/sequencer/loop','enabled='+(lc?'off':'on'),function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);});});}");
+		html.Append("function toggleAutoNext(){var ab=document.getElementById('seq-autonext-btn');var ac=ab&&ab.className==='loop-on';");
+		html.Append("_qs('/api/sequencer/autonext','enabled='+(ac?'off':'on'),function(){_qs('/api/sequencer/status','',function(d){applyStatus(d);});});}");
 		// Playlist functions
-		HTML += "function loadPlaylist(){_qs('/api/playlist','',function(d){";
-		HTML += "if(!d)return;_plCnt=d.count;_plShuffle=d.shuffle;_plRepeat=d.repeat;";
-		HTML += "var pc=document.getElementById('pl-count');if(pc)pc.textContent=d.count>0?'('+d.count+' tracks)':'';";
-		HTML += "var sb=document.getElementById('pl-shuffle-btn');if(sb){sb.className=d.shuffle?'loop-on':'';sb.title=d.shuffle?'Shuffle: ON':'Shuffle: OFF';}";
-		HTML += "var rb=document.getElementById('pl-repeat-btn');if(rb){rb.className=d.repeat?'loop-on':'';rb.title=d.repeat?'Repeat: ON':'Repeat: OFF';}";
-		HTML += "var el=document.getElementById('pl-list');if(!el)return;";
-		HTML += "if(!d.entries||!d.entries.length){el.innerHTML='<em style=\"color:#64748b;\">Queue empty</em>';return;}";
-		HTML += "var html='<table style=\"width:100%;\">',i;";
-		HTML += "for(i=0;i<d.entries.length;i++){";
-		HTML += "var cur=i===d.index,bg=cur?'background:#0f2744;border-left:3px solid #1d4ed8;':'';";
-		HTML += "var nm=d.entries[i].replace(/^(SD:|USB:)/,'');";
-		HTML += "html+='<tr style=\"'+bg+'\"><td style=\"color:#e2e8f0;font-size:13px;padding:4px 6px;\">'+nm+'</td>';";
-		HTML += "html+='<td style=\"text-align:right;white-space:nowrap;padding:2px;\">'+";
-		HTML += "'<button onclick=\"plPlay('+i+')\"> &#9654;</button> '+";
-		HTML += "'<button onclick=\"plUp('+i+')\">&#8593;</button> '+";
-		HTML += "'<button onclick=\"plDown('+i+')\">&#8595;</button> '+";
-		HTML += "'<button onclick=\"plRemove('+i+')\" class=\"warn\">&#215;</button>'+";
-		HTML += "'</td></tr>';}";
-		HTML += "html+='</table>';el.innerHTML=html;});}";
-		HTML += "function plAdd(){var f=document.getElementById('seq-file').value;";
-		HTML += "if(!f){showToast('Select a file first.',false);return;}";
-		HTML += "_qs('/api/playlist/add','file='+encodeURIComponent(f),function(){loadPlaylist();});}";
-		HTML += "function plAddAll(){_qs('/api/playlist/add-all','',function(){loadPlaylist();});}";
-		HTML += "function plClear(){_qs('/api/playlist/clear','',function(){loadPlaylist();});}";
-		HTML += "function plRemove(i){_qs('/api/playlist/remove','index='+i,function(){loadPlaylist();});}";
-		HTML += "function plUp(i){_qs('/api/playlist/up','index='+i,function(){loadPlaylist();});}";
-		HTML += "function plDown(i){_qs('/api/playlist/down','index='+i,function(){loadPlaylist();});}";
-		HTML += "function plPlay(i){_qs('/api/playlist/play','index='+i,function(){});}";
-		HTML += "function togglePlShuffle(){_qs('/api/playlist/shuffle','enabled='+(_plShuffle?'off':'on'),function(){loadPlaylist();});}";
-		HTML += "function togglePlRepeat(){_qs('/api/playlist/repeat','enabled='+(_plRepeat?'off':'on'),function(){loadPlaylist();});}";
-		HTML += "loadPlaylist();loadFiles();schedPoll();";
-		HTML += "</script></main></body></html>";
+		html.Append("function loadPlaylist(){_qs('/api/playlist','',function(d){");
+		html.Append("if(!d)return;_plCnt=d.count;_plShuffle=d.shuffle;_plRepeat=d.repeat;");
+		html.Append("var pc=document.getElementById('pl-count');if(pc)pc.textContent=d.count>0?'('+d.count+' tracks)':'';");
+		html.Append("var sb=document.getElementById('pl-shuffle-btn');if(sb){sb.className=d.shuffle?'loop-on':'';sb.title=d.shuffle?'Shuffle: ON':'Shuffle: OFF';}");
+		html.Append("var rb=document.getElementById('pl-repeat-btn');if(rb){rb.className=d.repeat?'loop-on':'';rb.title=d.repeat?'Repeat: ON':'Repeat: OFF';}");
+		html.Append("var el=document.getElementById('pl-list');if(!el)return;");
+		html.Append("if(!d.entries||!d.entries.length){el.innerHTML='<em style=\"color:#64748b;\">Queue empty</em>';return;}");
+		html.Append("var html='<table style=\"width:100%;\">',i;");
+		html.Append("for(i=0;i<d.entries.length;i++){");
+		html.Append("var cur=i===d.index,bg=cur?'background:#0f2744;border-left:3px solid #1d4ed8;':'';");
+		html.Append("var nm=d.entries[i].replace(/^(SD:|USB:)/,'');");
+		html.Append("html+='<tr style=\"'+bg+'\"><td style=\"color:#e2e8f0;font-size:13px;padding:4px 6px;\">'+nm+'</td>';");
+		html.Append("html+='<td style=\"text-align:right;white-space:nowrap;padding:2px;\">'+");
+		html.Append("'<button onclick=\"plPlay('+i+')\"> &#9654;</button> '+");
+		html.Append("'<button onclick=\"plUp('+i+')\">&#8593;</button> '+");
+		html.Append("'<button onclick=\"plDown('+i+')\">&#8595;</button> '+");
+		html.Append("'<button onclick=\"plRemove('+i+')\" class=\"warn\">&#215;</button>'+");
+		html.Append("'</td></tr>';}");
+		html.Append("html+='</table>';el.innerHTML=html;});}");
+		html.Append("function plAdd(){var f=document.getElementById('seq-file').value;");
+		html.Append("if(!f){showToast('Select a file first.',false);return;}");
+		html.Append("_qs('/api/playlist/add','file='+encodeURIComponent(f),function(){loadPlaylist();});}");
+		html.Append("function plAddAll(){_qs('/api/playlist/add-all','',function(){loadPlaylist();});}");
+		html.Append("function plClear(){_qs('/api/playlist/clear','',function(){loadPlaylist();});}");
+		html.Append("function plRemove(i){_qs('/api/playlist/remove','index='+i,function(){loadPlaylist();});}");
+		html.Append("function plUp(i){_qs('/api/playlist/up','index='+i,function(){loadPlaylist();});}");
+		html.Append("function plDown(i){_qs('/api/playlist/down','index='+i,function(){loadPlaylist();});}");
+		html.Append("function plPlay(i){_qs('/api/playlist/play','index='+i,function(){});}");
+		html.Append("function togglePlShuffle(){_qs('/api/playlist/shuffle','enabled='+(_plShuffle?'off':'on'),function(){loadPlaylist();});}");
+		html.Append("function togglePlRepeat(){_qs('/api/playlist/repeat','enabled='+(_plRepeat?'off':'on'),function(){loadPlaylist();});}");
+		html.Append("loadPlaylist();loadFiles();schedPoll();");
+		html.Append("</script></main></body></html>");
 
-		const unsigned nBodyLength = HTML.GetLength();
-		if (*pLength < nBodyLength)
+		if (!html.bOk)
 			return HTTPInternalServerError;
-
-		memcpy(pBuffer, static_cast<const char*>(HTML), nBodyLength);
-		*pLength = nBodyLength;
+		*pLength = html.Length();
 		*ppContentType = "text/html; charset=utf-8";
 		return HTTPOK;
 }
 
 THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const char** ppContentType)
 {
-		CString HTML;
-		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
-		HTML += "<title>mt32-pi mixer</title><link rel='stylesheet' href='/app.css'></head><body><main>";
-		HTML += "<script src='/app.js'></script>";
-		HTML += "<h1>MIDI Mixer / Router</h1>";
-		HTML += "<p>Route MIDI channels to engines and remap channel numbers.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
+		HtmlWriter html(pBuffer, *pLength);
+		html.Append("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+		html.Append("<title>mt32-pi mixer</title><link rel='stylesheet' href='/app.css'></head><body><main>");
+		html.Append("<script src='/app.js'></script>");
+		html.Append("<h1>MIDI Mixer / Router</h1>");
+		html.Append("<p>Route MIDI channels to engines and remap channel numbers.</p>");
+		html.Append("<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>");
 
 		// Preset + Enable section
-		HTML += "<section><h2>Mode</h2><div class='grid'>";
-		HTML += "<label>Preset<select id='mx-preset' onchange='setPreset(this.value)'>";
-		HTML += "<option value='0'>Single MT-32</option><option value='1'>Single FluidSynth</option>";
-		HTML += "<option value='2'>Split GM</option><option value='3'>Custom</option></select></label>";
-		HTML += "<label>Dual mode<select id='mx-enabled' onchange='setEnabled(this.value)'>";
-		HTML += "<option value='1'>Enabled</option><option value='0'>Disabled</option></select></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>Mode</h2><div class='grid'>");
+		html.Append("<label>Preset<select id='mx-preset' onchange='setPreset(this.value)'>");
+		html.Append("<option value='0'>Single MT-32</option><option value='1'>Single FluidSynth</option>");
+		html.Append("<option value='2'>Split GM</option><option value='3'>Custom</option></select></label>");
+		html.Append("<label>Dual mode<select id='mx-enabled' onchange='setEnabled(this.value)'>");
+		html.Append("<option value='1'>Enabled</option><option value='0'>Disabled</option></select></label>");
+		html.Append("</div></section>");
 
 		// Volume / Pan
-		HTML += "<section><h2>Engine Levels</h2><div class='grid'>";
-		HTML += "<label>MT-32 vol<input id='mx-mt32v' type='range' min='0' max='100' oninput='setParam(\"mt32_volume\",this.value)'></label>";
-		HTML += "<label>FluidSynth vol<input id='mx-fluidv' type='range' min='0' max='100' oninput='setParam(\"fluid_volume\",this.value)'></label>";
-		HTML += "<label>MT-32 pan<input id='mx-mt32p' type='range' min='-100' max='100' oninput='setParam(\"mt32_pan\",this.value)'></label>";
-		HTML += "<label>FluidSynth pan<input id='mx-fluidp' type='range' min='-100' max='100' oninput='setParam(\"fluid_pan\",this.value)'></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>Engine Levels</h2><div class='grid'>");
+		html.Append("<label>MT-32 vol<input id='mx-mt32v' type='range' min='0' max='100' oninput='setParam(\"mt32_volume\",this.value)'></label>");
+		html.Append("<label>FluidSynth vol<input id='mx-fluidv' type='range' min='0' max='100' oninput='setParam(\"fluid_volume\",this.value)'></label>");
+		html.Append("<label>MT-32 pan<input id='mx-mt32p' type='range' min='-100' max='100' oninput='setParam(\"mt32_pan\",this.value)'></label>");
+		html.Append("<label>FluidSynth pan<input id='mx-fluidp' type='range' min='-100' max='100' oninput='setParam(\"fluid_pan\",this.value)'></label>");
+		html.Append("</div></section>");
 
 		// Audio render performance
-		HTML += "<section><h2>Audio Performance</h2><div class='grid'>";
-		HTML += "<label>Render <span id='mx-render'>-</span> &micro;s</label>";
-		HTML += "<label>Average <span id='mx-avg'>-</span> &micro;s</label>";
-		HTML += "<label>Peak <span id='mx-peak'>-</span> &micro;s</label>";
-		HTML += "<label>Deadline <span id='mx-deadline'>-</span> &micro;s</label>";
-                HTML += "<label>CPU load <strong id='mx-cpu'>-</strong>% <span id='mx-cpu-hint' style='font-size:11px;font-weight:normal;display:none'></span></label>";
-		HTML += "<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#3b82f6;vertical-align:middle;margin-right:3px;'></span>MT-32</span>";
-		HTML += "<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#22c55e;vertical-align:middle;margin-right:3px;'></span>FluidSynth</span>";
-		HTML += "<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#a855f7;vertical-align:middle;margin-right:3px;'></span>Layered</span>";
-		HTML += "<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#475569;vertical-align:middle;margin-right:3px;'></span>None</span>";
-		HTML += "</div>";
-		HTML += "<table style='width:100%;border-collapse:collapse;'><thead><tr>";
-		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>CH</th>";
-		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Engine</th>";
-		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Remap&rarr;</th>";
-		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Layer</th>";
-		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Vol%</th>";
-		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Instrument</th>";
-		HTML += "<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;min-width:80px;'>Activity</th>";
-		HTML += "</tr></thead><tbody id='mx-ch'></tbody></table>";
-		HTML += "<div style='margin-top:8px;'>";
-		HTML += "<button onclick='setAllLayer(true)'>Layer All</button> ";
-		HTML += "<button onclick='setAllLayer(false)'>Unlayer All</button> ";
-		HTML += "<button onclick='resetCCFilters()'>Reset CC Filters</button> ";
-		HTML += "<button onclick='resetChVol()'>Reset Vol</button> ";
-		HTML += "<button onclick='savePreset()' style='background:#1e3a5f;border-color:#3b82f6;'>&#128190; Save Preset</button> ";
-		HTML += "<button onclick='loadPreset()' style='background:#1c2e1a;border-color:#4ade80;'>&#128190; Load Preset</button>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>Audio Performance</h2><div class='grid'>");
+		html.Append("<label>Render <span id='mx-render'>-</span> &micro;s</label>");
+		html.Append("<label>Average <span id='mx-avg'>-</span> &micro;s</label>");
+		html.Append("<label>Peak <span id='mx-peak'>-</span> &micro;s</label>");
+		html.Append("<label>Deadline <span id='mx-deadline'>-</span> &micro;s</label>");
+                html.Append("<label>CPU load <strong id='mx-cpu'>-</strong>% <span id='mx-cpu-hint' style='font-size:11px;font-weight:normal;display:none'></span></label>");
+		html.Append("<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#3b82f6;vertical-align:middle;margin-right:3px;'></span>MT-32</span>");
+		html.Append("<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#22c55e;vertical-align:middle;margin-right:3px;'></span>FluidSynth</span>");
+		html.Append("<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#a855f7;vertical-align:middle;margin-right:3px;'></span>Layered</span>");
+		html.Append("<span><span style='display:inline-block;width:12px;height:12px;border-radius:3px;background:#475569;vertical-align:middle;margin-right:3px;'></span>None</span>");
+		html.Append("</div>");
+		html.Append("<table style='width:100%;border-collapse:collapse;'><thead><tr>");
+		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>CH</th>");
+		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Engine</th>");
+		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Remap&rarr;</th>");
+		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Layer</th>");
+		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Vol%</th>");
+		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;'>Instrument</th>");
+		html.Append("<th style='text-align:left;padding:4px;border-bottom:2px solid #334155;color:#93c5fd;min-width:80px;'>Activity</th>");
+		html.Append("</tr></thead><tbody id='mx-ch'></tbody></table>");
+		html.Append("<div style='margin-top:8px;'>");
+		html.Append("<button onclick='setAllLayer(true)'>Layer All</button> ");
+		html.Append("<button onclick='setAllLayer(false)'>Unlayer All</button> ");
+		html.Append("<button onclick='resetCCFilters()'>Reset CC Filters</button> ");
+		html.Append("<button onclick='resetChVol()'>Reset Vol</button> ");
+		html.Append("<button onclick='savePreset()' style='background:#1e3a5f;border-color:#3b82f6;'>&#128190; Save Preset</button> ");
+		html.Append("<button onclick='loadPreset()' style='background:#1c2e1a;border-color:#4ade80;'>&#128190; Load Preset</button>");
+		html.Append("</div></section>");
 
 		// Post-mix audio effects
-		HTML += "<section><h2>Audio Effects</h2><div class='grid'>";
-		HTML += "<label>EQ<select id='mx-fx-eq' onchange=\"setParam('fx_eq_enabled',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>";
-		HTML += "<label>Bass (dB)<input id='mx-fx-bass' type='number' min='-12' max='12' step='1' oninput=\"setParam('fx_eq_bass',this.value)\"></label>";
-		HTML += "<label>Treble (dB)<input id='mx-fx-treble' type='number' min='-12' max='12' step='1' oninput=\"setParam('fx_eq_treble',this.value)\"></label>";
-		HTML += "<label>Limiter<select id='mx-fx-lim' onchange=\"setParam('fx_limiter_enabled',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>";
-		HTML += "<label>Reverb<select id='mx-fx-rev' onchange=\"setParam('fx_reverb_enabled',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>";
-		HTML += "<label>Room % <input id='mx-fx-room' type='range' min='0' max='100' oninput=\"setParam('fx_reverb_room',this.value);document.getElementById('mx-fx-room-val').textContent=this.value\"> <span id='mx-fx-room-val'>50</span></label>";
-		HTML += "<label>Damp % <input id='mx-fx-damp' type='range' min='0' max='100' oninput=\"setParam('fx_reverb_damp',this.value);document.getElementById('mx-fx-damp-val').textContent=this.value\"> <span id='mx-fx-damp-val'>50</span></label>";
-		HTML += "<label>Wet %  <input id='mx-fx-wet'  type='range' min='0' max='100' oninput=\"setParam('fx_reverb_wet',this.value);document.getElementById('mx-fx-wet-val').textContent=this.value\"> <span id='mx-fx-wet-val'>33</span></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>Audio Effects</h2><div class='grid'>");
+		html.Append("<label>EQ<select id='mx-fx-eq' onchange=\"setParam('fx_eq_enabled',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>");
+		html.Append("<label>Bass (dB)<input id='mx-fx-bass' type='number' min='-12' max='12' step='1' oninput=\"setParam('fx_eq_bass',this.value)\"></label>");
+		html.Append("<label>Treble (dB)<input id='mx-fx-treble' type='number' min='-12' max='12' step='1' oninput=\"setParam('fx_eq_treble',this.value)\"></label>");
+		html.Append("<label>Limiter<select id='mx-fx-lim' onchange=\"setParam('fx_limiter_enabled',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>");
+		html.Append("<label>Reverb<select id='mx-fx-rev' onchange=\"setParam('fx_reverb_enabled',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>");
+		html.Append("<label>Room % <input id='mx-fx-room' type='range' min='0' max='100' oninput=\"setParam('fx_reverb_room',this.value);document.getElementById('mx-fx-room-val').textContent=this.value\"> <span id='mx-fx-room-val'>50</span></label>");
+		html.Append("<label>Damp % <input id='mx-fx-damp' type='range' min='0' max='100' oninput=\"setParam('fx_reverb_damp',this.value);document.getElementById('mx-fx-damp-val').textContent=this.value\"> <span id='mx-fx-damp-val'>50</span></label>");
+		html.Append("<label>Wet %  <input id='mx-fx-wet'  type='range' min='0' max='100' oninput=\"setParam('fx_reverb_wet',this.value);document.getElementById('mx-fx-wet-val').textContent=this.value\"> <span id='mx-fx-wet-val'>33</span></label>");
+		html.Append("</div></section>");
 
 		// MIDI Thru
-		HTML += "<section><h2>MIDI Routing</h2><div class='grid'>";
-		HTML += "<label>MIDI Thru<select id='mx-midi-thru' onchange=\"setRtParam('midi_thru',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>MIDI Routing</h2><div class='grid'>");
+		html.Append("<label>MIDI Thru<select id='mx-midi-thru' onchange=\"setRtParam('midi_thru',this.value)\"><option value='on'>On</option><option value='off'>Off</option></select></label>");
+		html.Append("</div></section>");
 
-		HTML += "<p id='mx-msg' style='color:#64748b;'></p>";
+		html.Append("<p id='mx-msg' style='color:#64748b;'></p>");
 
 		// JavaScript
-		HTML += "<script>";
+		html.Append("<script>");
 		// helpers
-		HTML += "function setParam(p,v){_qs('/api/mixer/set','param='+p+'&value='+encodeURIComponent(v),function(r){if(!r||!r.ok)showToast('Error',false);});}";
-		HTML += "function setRtParam(p,v){_qs('/api/runtime/set','param='+p+'&value='+encodeURIComponent(v),function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}"; 
-		HTML += "function setEnabled(v){setParam('enabled',v==='1'?'on':'off');}";
-		HTML += "function setPreset(v){_qs('/api/mixer/preset','preset='+v,function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}";
-		HTML += "function savePreset(){_qs('/api/router/save','',function(r){if(r&&r.ok)showToast('Preset saved');else showToast('Save failed',false);});}";
-		HTML += "function loadPreset(){_qs('/api/router/load','',function(r){if(r&&r.ok){loadStatus();showToast('Preset loaded');}else showToast('Load failed',false);});}";
+		html.Append("function setParam(p,v){_qs('/api/mixer/set','param='+p+'&value='+encodeURIComponent(v),function(r){if(!r||!r.ok)showToast('Error',false);});}");
+		html.Append("function setRtParam(p,v){_qs('/api/runtime/set','param='+p+'&value='+encodeURIComponent(v),function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}"); 
+		html.Append("function setEnabled(v){setParam('enabled',v==='1'?'on':'off');}");
+		html.Append("function setPreset(v){_qs('/api/mixer/preset','preset='+v,function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}");
+		html.Append("function savePreset(){_qs('/api/router/save','',function(r){if(r&&r.ok)showToast('Preset saved');else showToast('Save failed',false);});}");
+		html.Append("function loadPreset(){_qs('/api/router/load','',function(r){if(r&&r.ok){loadStatus();showToast('Preset loaded');}else showToast('Load failed',false);});}");
 
 		// channel engine/remap
-		HTML += "function setChEngine(ch,eng){_qs('/api/mixer/set','param=channel_engine&value='+ch+','+eng,function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}";
-		HTML += "function setChRemap(ch,dst){var n=parseInt(dst,10);if(n<1||n>16)return;";
-		HTML += "_qs('/api/mixer/set','param=channel_remap&value='+ch+','+n,function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}";
-		HTML += "function setChVol(ch,vol){_qs('/api/mixer/set','param=channel_volume&value='+ch+','+vol,function(r){if(!r||!r.ok)showToast('Error',false);});}";
+		html.Append("function setChEngine(ch,eng){_qs('/api/mixer/set','param=channel_engine&value='+ch+','+eng,function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}");
+		html.Append("function setChRemap(ch,dst){var n=parseInt(dst,10);if(n<1||n>16)return;");
+		html.Append("_qs('/api/mixer/set','param=channel_remap&value='+ch+','+n,function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}");
+		html.Append("function setChVol(ch,vol){_qs('/api/mixer/set','param=channel_volume&value='+ch+','+vol,function(r){if(!r||!r.ok)showToast('Error',false);});}");
 
 		// layer
-		HTML += "function setChLayer(ch,on){_qs('/api/mixer/set','param=channel_layer&value='+ch+','+(on?'on':'off'),function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}";
-		HTML += "function setAllLayer(on){_qs('/api/mixer/set','param=all_layer&value='+(on?'on':'off'),function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}";
-		HTML += "function resetCCFilters(){_qs('/api/mixer/set','param=cc_filter_reset&value=1',function(r){if(r&&r.ok)showToast('CC filters reset');else showToast('Error',false);});}";
-		HTML += "function resetChVol(){_qs('/api/mixer/set','param=channel_volume_reset&value=1',function(r){if(r&&r.ok){loadStatus();showToast('Vol reset');}else showToast('Error',false);});}";
+		html.Append("function setChLayer(ch,on){_qs('/api/mixer/set','param=channel_layer&value='+ch+','+(on?'on':'off'),function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}");
+		html.Append("function setAllLayer(on){_qs('/api/mixer/set','param=all_layer&value='+(on?'on':'off'),function(r){if(r&&r.ok)loadStatus();else showToast('Error',false);});}");
+		html.Append("function resetCCFilters(){_qs('/api/mixer/set','param=cc_filter_reset&value=1',function(r){if(r&&r.ok)showToast('CC filters reset');else showToast('Error',false);});}");
+		html.Append("function resetChVol(){_qs('/api/mixer/set','param=channel_volume_reset&value=1',function(r){if(r&&r.ok){loadStatus();showToast('Vol reset');}else showToast('Error',false);});}");
 
 		// render
-		HTML += "function renderRouteMap(chs){var mp=document.getElementById('mx-route-map');if(!mp)return;mp.innerHTML='';for(var i=0;i<chs.length;i++){var c=chs[i];var chip=document.createElement('div');var col=c.layered?'#a855f7':(c.engine==='MT-32'?'#3b82f6':(c.engine==='FluidSynth'?'#22c55e':'#475569'));chip.style.cssText='width:40px;height:40px;border-radius:6px;background:'+col+';display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:default;flex-shrink:0;position:relative;';var chnum=document.createElement('span');chnum.style.cssText='font-size:12px;font-weight:bold;color:#fff;line-height:1;';chnum.textContent=c.ch;chip.appendChild(chnum);var eng=document.createElement('span');eng.style.cssText='font-size:8px;color:rgba(255,255,255,0.75);line-height:1;margin-top:2px;';eng.textContent=c.layered?'L':c.engine==='MT-32'?'MT':'SF';chip.appendChild(eng);if(c.remap!==c.ch){var rm=document.createElement('span');rm.style.cssText='font-size:7px;color:rgba(255,255,255,0.6);line-height:1;margin-top:1px;';rm.textContent='\u2192'+c.remap;chip.appendChild(rm);}chip.title='Ch '+c.ch+': '+(c.layered?'Layered (both)':c.engine)+(c.remap!==c.ch?' \u2192ch'+c.remap:'')+' Vol:'+c.vol+'%';mp.appendChild(chip);}}";
-		HTML += "function renderChannels(chs){renderRouteMap(chs);var tb=document.getElementById('mx-ch');tb.innerHTML='';";
-		HTML += "for(var i=0;i<chs.length;i++){var c=chs[i];var tr=document.createElement('tr');";
-		HTML += "var bg=i%2===0?'#111827':'#0b1220';tr.style.background=bg;";
-		HTML += "var ec=c.layered?'#c084fc':(c.engine==='MT-32'?'#93c5fd':(c.engine==='FluidSynth'?'#4ade80':'#475569'));";
-		HTML += "tr.style.borderLeft='3px solid '+ec;";
+		html.Append("function renderRouteMap(chs){var mp=document.getElementById('mx-route-map');if(!mp)return;mp.innerHTML='';for(var i=0;i<chs.length;i++){var c=chs[i];var chip=document.createElement('div');var col=c.layered?'#a855f7':(c.engine==='MT-32'?'#3b82f6':(c.engine==='FluidSynth'?'#22c55e':'#475569'));chip.style.cssText='width:40px;height:40px;border-radius:6px;background:'+col+';display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:default;flex-shrink:0;position:relative;';var chnum=document.createElement('span');chnum.style.cssText='font-size:12px;font-weight:bold;color:#fff;line-height:1;';chnum.textContent=c.ch;chip.appendChild(chnum);var eng=document.createElement('span');eng.style.cssText='font-size:8px;color:rgba(255,255,255,0.75);line-height:1;margin-top:2px;';eng.textContent=c.layered?'L':c.engine==='MT-32'?'MT':'SF';chip.appendChild(eng);if(c.remap!==c.ch){var rm=document.createElement('span');rm.style.cssText='font-size:7px;color:rgba(255,255,255,0.6);line-height:1;margin-top:1px;';rm.textContent='\u2192'+c.remap;chip.appendChild(rm);}chip.title='Ch '+c.ch+': '+(c.layered?'Layered (both)':c.engine)+(c.remap!==c.ch?' \u2192ch'+c.remap:'')+' Vol:'+c.vol+'%';mp.appendChild(chip);}}");
+		html.Append("function renderChannels(chs){renderRouteMap(chs);var tb=document.getElementById('mx-ch');tb.innerHTML='';");
+		html.Append("for(var i=0;i<chs.length;i++){var c=chs[i];var tr=document.createElement('tr');");
+		html.Append("var bg=i%2===0?'#111827':'#0b1220';tr.style.background=bg;");
+		html.Append("var ec=c.layered?'#c084fc':(c.engine==='MT-32'?'#93c5fd':(c.engine==='FluidSynth'?'#4ade80':'#475569'));");
+		html.Append("tr.style.borderLeft='3px solid '+ec;");
 
 		// CH number cell
-		HTML += "var td1=document.createElement('td');td1.style.padding='6px 4px';td1.style.borderBottom='1px solid #1e293b';";
-		HTML += "td1.textContent=c.ch;tr.appendChild(td1);";
+		html.Append("var td1=document.createElement('td');td1.style.padding='6px 4px';td1.style.borderBottom='1px solid #1e293b';");
+		html.Append("td1.textContent=c.ch;tr.appendChild(td1);");
 
 		// Engine select cell
-		HTML += "var td2=document.createElement('td');td2.style.padding='6px 4px';td2.style.borderBottom='1px solid #1e293b';";
-		HTML += "var sel=document.createElement('select');sel.dataset.ch=c.ch;";
-		HTML += "var o1=document.createElement('option');o1.value='mt32';o1.textContent='MT-32';if(c.engine==='MT-32')o1.selected=true;sel.appendChild(o1);";
-		HTML += "var o2=document.createElement('option');o2.value='fluidsynth';o2.textContent='FluidSynth';if(c.engine==='FluidSynth')o2.selected=true;sel.appendChild(o2);";
-		HTML += "sel.onchange=function(){setChEngine(this.dataset.ch,this.value);};";
-		HTML += "td2.appendChild(sel);tr.appendChild(td2);";
+		html.Append("var td2=document.createElement('td');td2.style.padding='6px 4px';td2.style.borderBottom='1px solid #1e293b';");
+		html.Append("var sel=document.createElement('select');sel.dataset.ch=c.ch;");
+		html.Append("var o1=document.createElement('option');o1.value='mt32';o1.textContent='MT-32';if(c.engine==='MT-32')o1.selected=true;sel.appendChild(o1);");
+		html.Append("var o2=document.createElement('option');o2.value='fluidsynth';o2.textContent='FluidSynth';if(c.engine==='FluidSynth')o2.selected=true;sel.appendChild(o2);");
+		html.Append("sel.onchange=function(){setChEngine(this.dataset.ch,this.value);};");
+		html.Append("td2.appendChild(sel);tr.appendChild(td2);");
 
 		// Remap input cell
-		HTML += "var td3=document.createElement('td');td3.style.padding='6px 4px';td3.style.borderBottom='1px solid #1e293b';";
-		HTML += "var inp=document.createElement('input');inp.type='number';inp.min=1;inp.max=16;inp.value=c.remap;";
-		HTML += "inp.style.width='60px';inp.dataset.ch=c.ch;";
-		HTML += "inp.onchange=function(){setChRemap(this.dataset.ch,this.value);};";
-		HTML += "td3.appendChild(inp);tr.appendChild(td3);";
+		html.Append("var td3=document.createElement('td');td3.style.padding='6px 4px';td3.style.borderBottom='1px solid #1e293b';");
+		html.Append("var inp=document.createElement('input');inp.type='number';inp.min=1;inp.max=16;inp.value=c.remap;");
+		html.Append("inp.style.width='60px';inp.dataset.ch=c.ch;");
+		html.Append("inp.onchange=function(){setChRemap(this.dataset.ch,this.value);};");
+		html.Append("td3.appendChild(inp);tr.appendChild(td3);");
 
 		// Layer checkbox cell
-		HTML += "var td4=document.createElement('td');td4.style.padding='6px 4px';td4.style.borderBottom='1px solid #1e293b';";
-		HTML += "var cb=document.createElement('input');cb.type='checkbox';cb.checked=!!c.layered;cb.dataset.ch=c.ch;";
-		HTML += "cb.onchange=function(){setChLayer(this.dataset.ch,this.checked);};";
-		HTML += "td4.appendChild(cb);tr.appendChild(td4);";
+		html.Append("var td4=document.createElement('td');td4.style.padding='6px 4px';td4.style.borderBottom='1px solid #1e293b';");
+		html.Append("var cb=document.createElement('input');cb.type='checkbox';cb.checked=!!c.layered;cb.dataset.ch=c.ch;");
+		html.Append("cb.onchange=function(){setChLayer(this.dataset.ch,this.checked);};");
+		html.Append("td4.appendChild(cb);tr.appendChild(td4);");
 
 		// Instrument name cell
-		HTML += "var td5i=document.createElement('td');td5i.style.padding='6px 4px';td5i.style.borderBottom='1px solid #1e293b';";
-		HTML += "td5i.style.fontSize='11px';td5i.style.color='#94a3b8';td5i.style.maxWidth='120px';td5i.style.overflow='hidden';td5i.style.textOverflow='ellipsis';td5i.style.whiteSpace='nowrap';";
-		HTML += "td5i.textContent=c.instrument||'\\u2014';tr.appendChild(td5i);";
+		html.Append("var td5i=document.createElement('td');td5i.style.padding='6px 4px';td5i.style.borderBottom='1px solid #1e293b';");
+		html.Append("td5i.style.fontSize='11px';td5i.style.color='#94a3b8';td5i.style.maxWidth='120px';td5i.style.overflow='hidden';td5i.style.textOverflow='ellipsis';td5i.style.whiteSpace='nowrap';");
+		html.Append("td5i.textContent=c.instrument||'\\u2014';tr.appendChild(td5i);");
 
 		// Volume slider cell (CC7 scale)
-		HTML += "var tdv=document.createElement('td');tdv.style.padding='6px 4px';tdv.style.borderBottom='1px solid #1e293b';tdv.style.minWidth='90px';";
-		HTML += "var vsl=document.createElement('input');vsl.type='range';vsl.min=0;vsl.max=100;vsl.value=c.vol!=null?c.vol:100;";
-		HTML += "vsl.style.width='80px';vsl.dataset.ch=c.ch;";
-		HTML += "vsl.oninput=function(){setChVol(this.dataset.ch,this.value);};";
-		HTML += "tdv.appendChild(vsl);";
-		HTML += "var vlab=document.createElement('span');vlab.style.fontSize='10px';vlab.style.color='#94a3b8';vlab.style.marginLeft='4px';vlab.textContent=(c.vol!=null?c.vol:100)+'%';";
-		HTML += "vsl.oninput=(function(l){return function(){setChVol(this.dataset.ch,this.value);l.textContent=this.value+'%';};})(vlab);";
-		HTML += "tdv.appendChild(vlab);tr.appendChild(tdv);";
+		html.Append("var tdv=document.createElement('td');tdv.style.padding='6px 4px';tdv.style.borderBottom='1px solid #1e293b';tdv.style.minWidth='90px';");
+		html.Append("var vsl=document.createElement('input');vsl.type='range';vsl.min=0;vsl.max=100;vsl.value=c.vol!=null?c.vol:100;");
+		html.Append("vsl.style.width='80px';vsl.dataset.ch=c.ch;");
+		html.Append("vsl.oninput=function(){setChVol(this.dataset.ch,this.value);};");
+		html.Append("tdv.appendChild(vsl);");
+		html.Append("var vlab=document.createElement('span');vlab.style.fontSize='10px';vlab.style.color='#94a3b8';vlab.style.marginLeft='4px';vlab.textContent=(c.vol!=null?c.vol:100)+'%';");
+		html.Append("vsl.oninput=(function(l){return function(){setChVol(this.dataset.ch,this.value);l.textContent=this.value+'%';};})(vlab);");
+		html.Append("tdv.appendChild(vlab);tr.appendChild(tdv);");
 
 		// Activity meter cell
-		HTML += "var td5=document.createElement('td');td5.style.padding='6px 4px';td5.style.borderBottom='1px solid #1e293b';";
-		HTML += "td5.innerHTML='<div class=\"meter-bar\" style=\"height:8px;\"><div class=\"meter-fill\" id=\"mxf-'+c.ch+'\"></div><div class=\"meter-peak\" id=\"mxp-'+c.ch+'\"></div></div>';";
-		HTML += "tr.appendChild(td5);";
+		html.Append("var td5=document.createElement('td');td5.style.padding='6px 4px';td5.style.borderBottom='1px solid #1e293b';");
+		html.Append("td5.innerHTML='<div class=\"meter-bar\" style=\"height:8px;\"><div class=\"meter-fill\" id=\"mxf-'+c.ch+'\"></div><div class=\"meter-peak\" id=\"mxp-'+c.ch+'\"></div></div>';");
+		html.Append("tr.appendChild(td5);");
 
-		HTML += "tb.appendChild(tr);}}";
+		html.Append("tb.appendChild(tr);}}");
 
 		// load status
-		HTML += "function loadStatus(){_qs('/api/mixer/status','',function(d){if(!d)return;";
-		HTML += "document.getElementById('mx-preset').value=d.preset;";
-		HTML += "document.getElementById('mx-enabled').value=d.enabled?'1':'0';";
-		HTML += "document.getElementById('mx-mt32v').value=Math.round(d.mt32_volume*100);";
-		HTML += "document.getElementById('mx-fluidv').value=Math.round(d.fluid_volume*100);";
-		HTML += "document.getElementById('mx-mt32p').value=Math.round(d.mt32_pan*100);";
-		HTML += "document.getElementById('mx-fluidp').value=Math.round(d.fluid_pan*100);";
-		HTML += "document.getElementById('mx-render').textContent=d.render_us;";
-		HTML += "document.getElementById('mx-avg').textContent=d.render_avg_us;";
-		HTML += "document.getElementById('mx-peak').textContent=d.render_peak_us;";
-		HTML += "document.getElementById('mx-deadline').textContent=d.deadline_us;";
-HTML += "var cpu=d.cpu_load;document.getElementById('mx-cpu').textContent=cpu;";
-                HTML += "var cpuEl=document.getElementById('mx-cpu');var hint=document.getElementById('mx-cpu-hint');";
-                HTML += "cpuEl.style.color=cpu>=85?'#ef4444':cpu>=65?'#f59e0b':'#22c55e';";
-                HTML += "if(cpu>=85){hint.textContent='\u26a0 underrun risk \u2014 increase chunk_size';hint.style.color='#ef4444';hint.style.display='inline';}";
-                HTML += "else if(cpu>=65){hint.textContent='approaching limit';hint.style.color='#f59e0b';hint.style.display='inline';}";
-                HTML += "else{hint.style.display='none';}";
-		HTML += "var fxEq=document.getElementById('mx-fx-eq');if(fxEq)fxEq.value=d.fx_eq_enabled?'on':'off';";
-		HTML += "var fxBass=document.getElementById('mx-fx-bass');if(fxBass)fxBass.value=d.fx_eq_bass;";
-		HTML += "var fxTreb=document.getElementById('mx-fx-treble');if(fxTreb)fxTreb.value=d.fx_eq_treble;";
-		HTML += "var fxLim=document.getElementById('mx-fx-lim');if(fxLim)fxLim.value=d.fx_limiter_enabled?'on':'off';";
-		HTML += "var fxRev=document.getElementById('mx-fx-rev');if(fxRev)fxRev.value=d.fx_reverb_enabled?'on':'off';";
-		HTML += "var fxRoom=document.getElementById('mx-fx-room');if(fxRoom){fxRoom.value=d.fx_reverb_room;document.getElementById('mx-fx-room-val').textContent=d.fx_reverb_room;}";
-		HTML += "var fxDamp=document.getElementById('mx-fx-damp');if(fxDamp){fxDamp.value=d.fx_reverb_damp;document.getElementById('mx-fx-damp-val').textContent=d.fx_reverb_damp;}";
-		HTML += "var fxWet=document.getElementById('mx-fx-wet');if(fxWet){fxWet.value=d.fx_reverb_wet;document.getElementById('mx-fx-wet-val').textContent=d.fx_reverb_wet;}";
-		HTML += "var mxThru=document.getElementById('mx-midi-thru');if(mxThru)mxThru.value=d.midi_thru_enabled?'on':'off';";
+		html.Append("function loadStatus(){_qs('/api/mixer/status','',function(d){if(!d)return;");
+		html.Append("document.getElementById('mx-preset').value=d.preset;");
+		html.Append("document.getElementById('mx-enabled').value=d.enabled?'1':'0';");
+		html.Append("document.getElementById('mx-mt32v').value=Math.round(d.mt32_volume*100);");
+		html.Append("document.getElementById('mx-fluidv').value=Math.round(d.fluid_volume*100);");
+		html.Append("document.getElementById('mx-mt32p').value=Math.round(d.mt32_pan*100);");
+		html.Append("document.getElementById('mx-fluidp').value=Math.round(d.fluid_pan*100);");
+		html.Append("document.getElementById('mx-render').textContent=d.render_us;");
+		html.Append("document.getElementById('mx-avg').textContent=d.render_avg_us;");
+		html.Append("document.getElementById('mx-peak').textContent=d.render_peak_us;");
+		html.Append("document.getElementById('mx-deadline').textContent=d.deadline_us;");
+html.Append("var cpu=d.cpu_load;document.getElementById('mx-cpu').textContent=cpu;");
+                html.Append("var cpuEl=document.getElementById('mx-cpu');var hint=document.getElementById('mx-cpu-hint');");
+                html.Append("cpuEl.style.color=cpu>=85?'#ef4444':cpu>=65?'#f59e0b':'#22c55e';");
+                html.Append("if(cpu>=85){hint.textContent='\u26a0 underrun risk \u2014 increase chunk_size';hint.style.color='#ef4444';hint.style.display='inline';}");
+                html.Append("else if(cpu>=65){hint.textContent='approaching limit';hint.style.color='#f59e0b';hint.style.display='inline';}");
+                html.Append("else{hint.style.display='none';}");
+		html.Append("var fxEq=document.getElementById('mx-fx-eq');if(fxEq)fxEq.value=d.fx_eq_enabled?'on':'off';");
+		html.Append("var fxBass=document.getElementById('mx-fx-bass');if(fxBass)fxBass.value=d.fx_eq_bass;");
+		html.Append("var fxTreb=document.getElementById('mx-fx-treble');if(fxTreb)fxTreb.value=d.fx_eq_treble;");
+		html.Append("var fxLim=document.getElementById('mx-fx-lim');if(fxLim)fxLim.value=d.fx_limiter_enabled?'on':'off';");
+		html.Append("var fxRev=document.getElementById('mx-fx-rev');if(fxRev)fxRev.value=d.fx_reverb_enabled?'on':'off';");
+		html.Append("var fxRoom=document.getElementById('mx-fx-room');if(fxRoom){fxRoom.value=d.fx_reverb_room;document.getElementById('mx-fx-room-val').textContent=d.fx_reverb_room;}");
+		html.Append("var fxDamp=document.getElementById('mx-fx-damp');if(fxDamp){fxDamp.value=d.fx_reverb_damp;document.getElementById('mx-fx-damp-val').textContent=d.fx_reverb_damp;}");
+		html.Append("var fxWet=document.getElementById('mx-fx-wet');if(fxWet){fxWet.value=d.fx_reverb_wet;document.getElementById('mx-fx-wet-val').textContent=d.fx_reverb_wet;}");
+		html.Append("var mxThru=document.getElementById('mx-midi-thru');if(mxThru)mxThru.value=d.midi_thru_enabled?'on':'off';");
 		// WebSocket for real-time channel meters
-		HTML += "var _mxLv=new Array(16).fill(0),_mxPk=new Array(16).fill(0),_mxPa=new Array(16).fill(-9999);";
-		HTML += "var _mxTgt=new Array(16).fill(0),_mxPt=new Array(16).fill(0);";
-		HTML += "function _mxRf(ts){for(var i=0;i<16;i++){var t=_mxTgt[i];_mxLv[i]=t>_mxLv[i]?_mxLv[i]+(t-_mxLv[i])*0.3:_mxLv[i]+(t-_mxLv[i])*0.07;";
-		HTML += "if(_mxPt[i]>_mxPk[i]){_mxPk[i]=_mxPt[i];_mxPa[i]=ts;}else if(ts-_mxPa[i]>1200)_mxPk[i]*=0.97;";
-		HTML += "var f=document.getElementById('mxf-'+i);if(f)f.style.width=(_mxLv[i]*100).toFixed(1)+'%';";
-		HTML += "var p=document.getElementById('mxp-'+i);if(p)p.style.left=(_mxPk[i]*100).toFixed(1)+'%';}";
-		HTML += "requestAnimationFrame(_mxRf);}requestAnimationFrame(_mxRf);";
-		HTML += "(function(){var ws=null,_rt=0;function conn(){ws=new WebSocket('ws://'+location.hostname+':8765/');";
-		HTML += "ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.channels)for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_mxTgt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_mxPt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));}}catch(x){}};";
-		HTML += "ws.onclose=function(){_rt=Math.min((_rt||500)*2,8000);setTimeout(conn,_rt);};ws.onerror=function(){ws.close();};}conn();})();";
+		html.Append("var _mxLv=new Array(16).fill(0),_mxPk=new Array(16).fill(0),_mxPa=new Array(16).fill(-9999);");
+		html.Append("var _mxTgt=new Array(16).fill(0),_mxPt=new Array(16).fill(0);");
+		html.Append("function _mxRf(ts){for(var i=0;i<16;i++){var t=_mxTgt[i];_mxLv[i]=t>_mxLv[i]?_mxLv[i]+(t-_mxLv[i])*0.3:_mxLv[i]+(t-_mxLv[i])*0.07;");
+		html.Append("if(_mxPt[i]>_mxPk[i]){_mxPk[i]=_mxPt[i];_mxPa[i]=ts;}else if(ts-_mxPa[i]>1200)_mxPk[i]*=0.97;");
+		html.Append("var f=document.getElementById('mxf-'+i);if(f)f.style.width=(_mxLv[i]*100).toFixed(1)+'%';");
+		html.Append("var p=document.getElementById('mxp-'+i);if(p)p.style.left=(_mxPk[i]*100).toFixed(1)+'%';}");
+		html.Append("requestAnimationFrame(_mxRf);}requestAnimationFrame(_mxRf);");
+		html.Append("(function(){var ws=null,_rt=0;function conn(){ws=new WebSocket('ws://'+location.hostname+':8765/');");
+		html.Append("ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.channels)for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_mxTgt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_mxPt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));}}catch(x){}};");
+		html.Append("ws.onclose=function(){_rt=Math.min((_rt||500)*2,8000);setTimeout(conn,_rt);};ws.onerror=function(){ws.close();};}conn();})();");
 
-		HTML += "</script></main></body></html>";
+		html.Append("</script></main></body></html>");
 
-		const unsigned nMixerLen = HTML.GetLength();
-		if (*pLength < nMixerLen)
+		if (!html.bOk)
 			return HTTPInternalServerError;
-
-		memcpy(pBuffer, static_cast<const char*>(HTML), nMixerLen);
-		*pLength = nMixerLen;
+		*pLength = html.Length();
 		*ppContentType = "text/html; charset=utf-8";
 		return HTTPOK;
 }
 
 THTTPStatus CWebDaemon::BuildMonitorPage(u8* pBuffer, unsigned* pLength, const char** ppContentType)
 {
-		CString HTML;
-		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
-		HTML += "<title>mt32-pi monitor</title><link rel='stylesheet' href='/app.css'></head><body><main>";
-		HTML += "<script src='/app.js'></script>";
-		HTML += "<h1>MIDI Monitor</h1>";
-		HTML += "<p>Live log of incoming MIDI events. Shows the last 64 messages received by the active synth.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
+		HtmlWriter html(pBuffer, *pLength);
+		html.Append("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+		html.Append("<title>mt32-pi monitor</title><link rel='stylesheet' href='/app.css'></head><body><main>");
+		html.Append("<script src='/app.js'></script>");
+		html.Append("<h1>MIDI Monitor</h1>");
+		html.Append("<p>Live log of incoming MIDI events. Shows the last 64 messages received by the active synth.</p>");
+		html.Append("<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>");
 
 		// Filter controls
-		HTML += "<section><h2>Filters</h2><div class='grid'>";
-		HTML += "<label>Channel<select id='mn-ch'><option value='0'>All channels</option>";
+		html.Append("<section><h2>Filters</h2><div class='grid'>");
+		html.Append("<label>Channel<select id='mn-ch'><option value='0'>All channels</option>");
 		for (int i = 1; i <= 16; ++i)
 		{
 			CString Opt; Opt.Format("<option value='%d'>Ch %d</option>", i, i);
-			HTML += static_cast<const char*>(Opt);
+			html.Append(static_cast<const char*>(Opt));
 		}
-		HTML += "</select></label>";
-		HTML += "<label>Type<select id='mn-type'>";
-		HTML += "<option value=''>All types</option>";
-		HTML += "<option value='Note On'>Note On</option>";
-		HTML += "<option value='Note Off'>Note Off</option>";
-		HTML += "<option value='CC'>CC</option>";
-		HTML += "<option value='Prog Change'>Prog Change</option>";
-		HTML += "<option value='Pitch Bend'>Pitch Bend</option>";
-		HTML += "<option value='Aftertouch'>Aftertouch</option>";
-		HTML += "<option value='SysEx'>SysEx</option>";
-		HTML += "</select></label>";
-		HTML += "<label style='align-self:end;'><button onclick='clearLog()'>Clear Log</button></label>";
-		HTML += "<label style='align-self:end;'><label><input type='checkbox' id='mn-pause'> Pause</label></label>";
-		HTML += "</div></section>";
+		html.Append("</select></label>");
+		html.Append("<label>Type<select id='mn-type'>");
+		html.Append("<option value=''>All types</option>");
+		html.Append("<option value='Note On'>Note On</option>");
+		html.Append("<option value='Note Off'>Note Off</option>");
+		html.Append("<option value='CC'>CC</option>");
+		html.Append("<option value='Prog Change'>Prog Change</option>");
+		html.Append("<option value='Pitch Bend'>Pitch Bend</option>");
+		html.Append("<option value='Aftertouch'>Aftertouch</option>");
+		html.Append("<option value='SysEx'>SysEx</option>");
+		html.Append("</select></label>");
+		html.Append("<label style='align-self:end;'><button onclick='clearLog()'>Clear Log</button></label>");
+		html.Append("<label style='align-self:end;'><label><input type='checkbox' id='mn-pause'> Pause</label></label>");
+		html.Append("</div></section>");
 
 		// Event table
-		HTML += "<section><h2>Events <span id='mn-count' style='font-size:12px;color:#64748b;'></span></h2>";
-		HTML += "<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;font-size:12px;font-family:monospace;'><thead><tr>";
-		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;min-width:80px;'>Time (ms)</th>";
-		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Ch</th>";
-		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Type</th>";
-		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Data 1</th>";
-		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Data 2</th>";
-		HTML += "<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Detail</th>";
-		HTML += "</tr></thead><tbody id='mn-body'></tbody></table></div></section>";
+		html.Append("<section><h2>Events <span id='mn-count' style='font-size:12px;color:#64748b;'></span></h2>");
+		html.Append("<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;font-size:12px;font-family:monospace;'><thead><tr>");
+		html.Append("<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;min-width:80px;'>Time (ms)</th>");
+		html.Append("<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Ch</th>");
+		html.Append("<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Type</th>");
+		html.Append("<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Data 1</th>");
+		html.Append("<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Data 2</th>");
+		html.Append("<th style='text-align:left;padding:4px 8px;border-bottom:2px solid #334155;color:#93c5fd;'>Detail</th>");
+		html.Append("</tr></thead><tbody id='mn-body'></tbody></table></div></section>");
 
 		// Note names for display
-		HTML += "<script>";
-		HTML += "var _nn=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];";
-		HTML += "function noteName(n){return _nn[n%12]+(Math.floor(n/12)-1);}";
+		html.Append("<script>");
+		html.Append("var _nn=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];");
+		html.Append("function noteName(n){return _nn[n%12]+(Math.floor(n/12)-1);}");
 
 		// CC name lookup (common ones)
-		HTML += "var _cc={1:'Mod',7:'Vol',10:'Pan',11:'Exp',64:'Sustain',91:'Reverb',93:'Chorus',121:'Reset',123:'All Off'};";
-		HTML += "function ccName(n){return _cc[n]?_cc[n]+' ('+n+')':String(n);}";
+		html.Append("var _cc={1:'Mod',7:'Vol',10:'Pan',11:'Exp',64:'Sustain',91:'Reverb',93:'Chorus',121:'Reset',123:'All Off'};");
+		html.Append("function ccName(n){return _cc[n]?_cc[n]+' ('+n+')':String(n);}");
 
 		// detail column
-		HTML += "function detail(e){";
-		HTML += "var type=e.type,d1=e.d1,d2=e.d2;";
-		HTML += "if(type==='Note On'||type==='Note Off')return noteName(parseInt(d1))+' vel='+d2;";
-		HTML += "if(type==='CC')return ccName(parseInt(d1))+' val='+d2;";
-		HTML += "if(type==='Prog Change')return 'Prog '+d1;";
-		HTML += "if(type==='Pitch Bend'){var v=(parseInt(d2)<<7|parseInt(d1))-8192;return 'bend='+v;}";
-		HTML += "if(type==='SysEx')return d2;";
-		HTML += "return d1+' '+d2;}";
+		html.Append("function detail(e){");
+		html.Append("var type=e.type,d1=e.d1,d2=e.d2;");
+		html.Append("if(type==='Note On'||type==='Note Off')return noteName(parseInt(d1))+' vel='+d2;");
+		html.Append("if(type==='CC')return ccName(parseInt(d1))+' val='+d2;");
+		html.Append("if(type==='Prog Change')return 'Prog '+d1;");
+		html.Append("if(type==='Pitch Bend'){var v=(parseInt(d2)<<7|parseInt(d1))-8192;return 'bend='+v;}");
+		html.Append("if(type==='SysEx')return d2;");
+		html.Append("return d1+' '+d2;}");
 
 		// type color
-		HTML += "var _tc={'Note On':'#4ade80','Note Off':'#94a3b8','CC':'#fbbf24','Prog Change':'#c084fc','Pitch Bend':'#38bdf8','Aftertouch':'#fb923c','SysEx':'#a78bfa'};";
-		HTML += "function typeColor(t){return _tc[t]||'#e2e8f0';}";
+		html.Append("var _tc={'Note On':'#4ade80','Note Off':'#94a3b8','CC':'#fbbf24','Prog Change':'#c084fc','Pitch Bend':'#38bdf8','Aftertouch':'#fb923c','SysEx':'#a78bfa'};");
+		html.Append("function typeColor(t){return _tc[t]||'#e2e8f0';}");
 
 		// render table
-		HTML += "var _evs=[];";
-		HTML += "function renderTable(){";
-		HTML += "var fch=parseInt(document.getElementById('mn-ch').value,10);";
-		HTML += "var fty=document.getElementById('mn-type').value;";
-		HTML += "var tb=document.getElementById('mn-body');tb.innerHTML='';";
-		HTML += "var shown=0;";
-		HTML += "for(var i=_evs.length-1;i>=0;i--){";  // newest first
-		HTML += "var e=_evs[i];";
-		HTML += "if(fch&&parseInt(e.ch,10)!==fch)continue;";
-		HTML += "if(fty&&e.type!==fty)continue;";
-		HTML += "var tr=document.createElement('tr');";
-		HTML += "tr.style.background=shown%2===0?'#111827':'#0b1220';";
-		HTML += "var cells=[e.ts,e.ch,e.type,e.d1,e.d2,detail(e)];";
-		HTML += "for(var j=0;j<cells.length;j++){var td=document.createElement('td');td.style.padding='4px 8px';td.style.borderBottom='1px solid #1e293b';";
-		HTML += "if(j===2){td.style.color=typeColor(e.type);td.style.fontWeight='bold';}";
-		HTML += "td.textContent=cells[j];tr.appendChild(td);}";
-		HTML += "tb.appendChild(tr);shown++;}";
-		HTML += "document.getElementById('mn-count').textContent='('+shown+' shown, '+_evs.length+' total)';}";
+		html.Append("var _evs=[];");
+		html.Append("function renderTable(){");
+		html.Append("var fch=parseInt(document.getElementById('mn-ch').value,10);");
+		html.Append("var fty=document.getElementById('mn-type').value;");
+		html.Append("var tb=document.getElementById('mn-body');tb.innerHTML='';");
+		html.Append("var shown=0;");
+		html.Append("for(var i=_evs.length-1;i>=0;i--){");  // newest first
+		html.Append("var e=_evs[i];");
+		html.Append("if(fch&&parseInt(e.ch,10)!==fch)continue;");
+		html.Append("if(fty&&e.type!==fty)continue;");
+		html.Append("var tr=document.createElement('tr');");
+		html.Append("tr.style.background=shown%2===0?'#111827':'#0b1220';");
+		html.Append("var cells=[e.ts,e.ch,e.type,e.d1,e.d2,detail(e)];");
+		html.Append("for(var j=0;j<cells.length;j++){var td=document.createElement('td');td.style.padding='4px 8px';td.style.borderBottom='1px solid #1e293b';");
+		html.Append("if(j===2){td.style.color=typeColor(e.type);td.style.fontWeight='bold';}");
+		html.Append("td.textContent=cells[j];tr.appendChild(td);}");
+		html.Append("tb.appendChild(tr);shown++;}");
+		html.Append("document.getElementById('mn-count').textContent='('+shown+' shown, '+_evs.length+' total)';}");
 
 		// fetch log
-		HTML += "function fetchLog(){if(document.getElementById('mn-pause').checked)return;";
-		HTML += "_qs('/api/midi/log','',function(d){if(!d||!d.events)return;_evs=d.events;";
-		HTML += "_evs.sort(function(a,b){return parseInt(a.ts)-parseInt(b.ts);});renderTable();});}";
+		html.Append("function fetchLog(){if(document.getElementById('mn-pause').checked)return;");
+		html.Append("_qs('/api/midi/log','',function(d){if(!d||!d.events)return;_evs=d.events;");
+		html.Append("_evs.sort(function(a,b){return parseInt(a.ts)-parseInt(b.ts);});renderTable();});}");
 
 		// clear
-		HTML += "function clearLog(){_qs('/api/midi/log/clear','',function(){_evs=[];renderTable();});}";
+		html.Append("function clearLog(){_qs('/api/midi/log/clear','',function(){_evs=[];renderTable();});}");
 
 		// filter change re-renders immediately
-		HTML += "document.getElementById('mn-ch').onchange=renderTable;";
-		HTML += "document.getElementById('mn-type').onchange=renderTable;";
+		html.Append("document.getElementById('mn-ch').onchange=renderTable;");
+		html.Append("document.getElementById('mn-type').onchange=renderTable;");
 
 		// poll every 500ms
-		HTML += "fetchLog();setInterval(fetchLog,500);";
-		HTML += "</script></main></body></html>";
+		html.Append("fetchLog();setInterval(fetchLog,500);");
+		html.Append("</script></main></body></html>");
 
-		const unsigned nLen = HTML.GetLength();
-		if (*pLength < nLen)
+		if (!html.bOk)
 			return HTTPInternalServerError;
-		memcpy(pBuffer, static_cast<const char*>(HTML), nLen);
-		*pLength = nLen;
+		*pLength = html.Length();
 		*ppContentType = "text/html; charset=utf-8";
 		return HTTPOK;
 }
 
 THTTPStatus CWebDaemon::BuildSoundPage(u8* pBuffer, unsigned* pLength, const char** ppContentType)
 {
-		CString HTML;
-		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
-		HTML += "<title>mt32-pi sound</title><link rel='stylesheet' href='/app.css'></head><body><main>";
-		HTML += "<script src='/app.js'></script>";
+		HtmlWriter html(pBuffer, *pLength);
+		html.Append("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+		html.Append("<title>mt32-pi sound</title><link rel='stylesheet' href='/app.css'></head><body><main>");
+		html.Append("<script src='/app.js'></script>");
 
 		const bool bMT32Active = std::strcmp(m_pMT32Pi->GetActiveSynthName(), "MT-32") == 0;
 		const int nROMSetIndex = m_pMT32Pi->GetMT32ROMSetIndex();
@@ -3219,239 +3247,236 @@ THTTPStatus CWebDaemon::BuildSoundPage(u8* pBuffer, unsigned* pLength, const cha
 		CString ChorusSpeed;   ChorusSpeed.Format("%.2f",  bHasSoundFontFX ? nChorusSpeed   : 0.0f);
 		CString SFGain;        SFGain.Format("%.2f",       bHasSoundFontFX ? nSFGain        : 0.0f);
 
-		HTML += "<h1>Sound control</h1><p>Live adjustments for synthesis engines and effects, no restart needed.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
-		HTML += "<div class='statusbar'><div class='pill'>Active synth: <strong id='rt_active_synth_label'>";
-		AppendEscaped(HTML, m_pMT32Pi->GetActiveSynthName());
-		HTML += "</strong></div><div class='pill'>MT-32 ROM: <strong id='rt_mt32_rom_name'>";
-		AppendEscaped(HTML, m_pMT32Pi->GetCurrentMT32ROMName());
-		HTML += "</strong></div><div class='pill'>SoundFont: <strong id='rt_soundfont_name'>";
-		AppendEscaped(HTML, m_pMT32Pi->GetCurrentSoundFontName());
-		HTML += "</strong></div><div class='pill'>Mixer: <strong id='rt_mixer_label'>-</strong></div></div>";
-		HTML += "<div id='mx-banner' style='display:none;background:#1e3a5f;border:1px solid #22d3ee;border-radius:8px;padding:8px 12px;margin:8px 0;color:#93c5fd;font-size:13px;'>&#9432; Mixer dual mode: both engines processing audio. Changing active synth switches to single-engine mode.</div>";
-		HTML += "<div class='tabbar'><button class='tabbtn";
-		HTML += bMT32Active ? " active" : "";
-		HTML += "' type='button' id='tab-mt32'>MT-32</button><button class='tabbtn";
-		HTML += !bMT32Active ? " active" : "";
-		HTML += "' type='button' id='tab-sf'>SoundFont</button></div>";
-		HTML += "<section><h2>Engine &amp; bank</h2><div class='grid'>";
-		HTML += "<label>Active synth<select id='rt_active_synth'><option value='mt32'";
-		HTML += SelectedAttr(bMT32Active);
-		HTML += ">MT-32</option><option value='soundfont'";
-		HTML += SelectedAttr(!bMT32Active);
-		HTML += ">SoundFont</option></select></label>";
-		HTML += "<label>Master volume <input id='rt_master_volume' type='range' min='0' max='100' step='1' value='";
-		AppendEscaped(HTML, MasterVolume);
-		HTML += "'><span id='rt_master_volume_val'>";
-		AppendEscaped(HTML, MasterVolume);
-		HTML += "</span></label>";
-		HTML += "</div></section>";
+		html.Append("<h1>Sound control</h1><p>Live adjustments for synthesis engines and effects, no restart needed.</p>");
+		html.Append("<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>");
+		html.Append("<div class='statusbar'><div class='pill'>Active synth: <strong id='rt_active_synth_label'>");
+		AppendEscaped(html, m_pMT32Pi->GetActiveSynthName());
+		html.Append("</strong></div><div class='pill'>MT-32 ROM: <strong id='rt_mt32_rom_name'>");
+		AppendEscaped(html, m_pMT32Pi->GetCurrentMT32ROMName());
+		html.Append("</strong></div><div class='pill'>SoundFont: <strong id='rt_soundfont_name'>");
+		AppendEscaped(html, m_pMT32Pi->GetCurrentSoundFontName());
+		html.Append("</strong></div><div class='pill'>Mixer: <strong id='rt_mixer_label'>-</strong></div></div>");
+		html.Append("<div id='mx-banner' style='display:none;background:#1e3a5f;border:1px solid #22d3ee;border-radius:8px;padding:8px 12px;margin:8px 0;color:#93c5fd;font-size:13px;'>&#9432; Mixer dual mode: both engines processing audio. Changing active synth switches to single-engine mode.</div>");
+		html.Append("<div class='tabbar'><button class='tabbtn");
+		html.Append(bMT32Active ? " active" : "");
+		html.Append("' type='button' id='tab-mt32'>MT-32</button><button class='tabbtn");
+		html.Append(!bMT32Active ? " active" : "");
+		html.Append("' type='button' id='tab-sf'>SoundFont</button></div>");
+		html.Append("<section><h2>Engine &amp; bank</h2><div class='grid'>");
+		html.Append("<label>Active synth<select id='rt_active_synth'><option value='mt32'");
+		html.Append(SelectedAttr(bMT32Active));
+		html.Append(">MT-32</option><option value='soundfont'");
+		html.Append(SelectedAttr(!bMT32Active));
+		html.Append(">SoundFont</option></select></label>");
+		html.Append("<label>Master volume <input id='rt_master_volume' type='range' min='0' max='100' step='1' value='");
+		AppendEscaped(html, MasterVolume);
+		html.Append("'><span id='rt_master_volume_val'>");
+		AppendEscaped(html, MasterVolume);
+		html.Append("</span></label>");
+		html.Append("</div></section>");
 
 		CString MT32ReverbGain; MT32ReverbGain.Format("%.2f", fMT32ReverbGain);
 		CString MT32PartialCount; MT32PartialCount.Format("%d", nMT32PartialCount);
 		
-		HTML += "<section id='mt32-section'><h2>MT-32</h2><div class='grid'>";
-		HTML += "<span class='subgroup-title'>ROM &amp; bank</span>";
-		HTML += "<label>ROM set MT-32<select id='rt_mt32_rom_set'><option value='mt32_old'";
-		HTML += SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::MT32Old));
-		HTML += ">MT-32 old</option><option value='mt32_new'";
-		HTML += SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::MT32New));
-		HTML += ">MT-32 new</option><option value='cm32l'";
-		HTML += SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::CM32L));
-		HTML += ">CM-32L</option></select></label>";
-		HTML += "<label>Current ROM<input value='";
-		AppendEscaped(HTML, m_pMT32Pi->GetCurrentMT32ROMName());
-		HTML += "' disabled></label>";
-		HTML += "<span class='subgroup-title'>Reverb</span>";
-		HTML += "<label>Reverb<select id='rt_mt32_reverb_active'><option value='off'";
-		HTML += SelectedAttr(!bMT32ReverbActive);
-		HTML += ">off</option><option value='on'";
-		HTML += SelectedAttr(bMT32ReverbActive);
-		HTML += ">on</option></select></label>";
-		HTML += "<label>Reverb gain <input id='rt_mt32_reverb_gain' type='range' min='0' max='4' step='0.2' value='";
-		AppendEscaped(HTML, MT32ReverbGain);
-		HTML += "'><span id='rt_mt32_reverb_gain_val'>";
-		AppendEscaped(HTML, MT32ReverbGain);
-		HTML += "</span></label>";
-		HTML += "<span class='subgroup-title'>Emulation enhancements</span>";
-		HTML += "<label>Nice Amp<select id='rt_mt32_nice_amp'><option value='off'";
-		HTML += SelectedAttr(!bMT32NiceAmp);
-		HTML += ">off</option><option value='on'";
-		HTML += SelectedAttr(bMT32NiceAmp);
-		HTML += ">on</option></select></label>";
-		HTML += "<label>Nice Pan<select id='rt_mt32_nice_pan'><option value='off'";
-		HTML += SelectedAttr(!bMT32NicePan);
-		HTML += ">off</option><option value='on'";
-		HTML += SelectedAttr(bMT32NicePan);
-		HTML += ">on</option></select></label>";
-		HTML += "<label>Nice Mix<select id='rt_mt32_nice_mix'><option value='off'";
-		HTML += SelectedAttr(!bMT32NiceMix);
-		HTML += ">off</option><option value='on'";
-		HTML += SelectedAttr(bMT32NiceMix);
-		HTML += ">on</option></select></label>";
-		HTML += "<span class='subgroup-title'>Advanced emulation</span>";
-		HTML += "<label>DAC<select id='rt_mt32_dac_mode'><option value='0'";
-		HTML += SelectedAttr(nMT32DACMode == 0);
-		HTML += ">NICE</option><option value='1'";
-		HTML += SelectedAttr(nMT32DACMode == 1);
-		HTML += ">PURE</option><option value='2'";
-		HTML += SelectedAttr(nMT32DACMode == 2);
-		HTML += ">GEN1</option><option value='3'";
-		HTML += SelectedAttr(nMT32DACMode == 3);
-		HTML += ">GEN2</option></select></label>";
-		HTML += "<label>MIDI Delay<select id='rt_mt32_midi_delay'><option value='0'";
-		HTML += SelectedAttr(nMT32MIDIDelay == 0);
-		HTML += ">IMMD</option><option value='1'";
-		HTML += SelectedAttr(nMT32MIDIDelay == 1);
-		HTML += ">SHORT</option><option value='2'";
-		HTML += SelectedAttr(nMT32MIDIDelay == 2);
-		HTML += ">ALL</option></select></label>";
-		HTML += "<label>Analog<select id='rt_mt32_analog_mode'><option value='0'";
-		HTML += SelectedAttr(nMT32AnalogMode == 0);
-		HTML += ">DIG</option><option value='1'";
-		HTML += SelectedAttr(nMT32AnalogMode == 1);
-		HTML += ">COARSE</option><option value='2'";
-		HTML += SelectedAttr(nMT32AnalogMode == 2);
-		HTML += ">ACCUR</option><option value='3'";
-		HTML += SelectedAttr(nMT32AnalogMode == 3);
-		HTML += ">OVR</option></select></label>";
-		HTML += "<label>Renderer<select id='rt_mt32_renderer_type'><option value='0'";
-		HTML += SelectedAttr(nMT32RendererType == 0);
-		HTML += ">I16</option><option value='1'";
-		HTML += SelectedAttr(nMT32RendererType == 1);
-		HTML += ">F32</option></select></label>";
-		HTML += "<label>Partials <input id='rt_mt32_partial_count' type='number' min='8' max='256' value='";
-		AppendEscaped(HTML, MT32PartialCount);
-		HTML += "'></label>";
-		HTML += "</div></section>";
+		html.Append("<section id='mt32-section'><h2>MT-32</h2><div class='grid'>");
+		html.Append("<span class='subgroup-title'>ROM &amp; bank</span>");
+		html.Append("<label>ROM set MT-32<select id='rt_mt32_rom_set'><option value='mt32_old'");
+		html.Append(SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::MT32Old)));
+		html.Append(">MT-32 old</option><option value='mt32_new'");
+		html.Append(SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::MT32New)));
+		html.Append(">MT-32 new</option><option value='cm32l'");
+		html.Append(SelectedAttr(nROMSetIndex == static_cast<int>(TMT32ROMSet::CM32L)));
+		html.Append(">CM-32L</option></select></label>");
+		html.Append("<label>Current ROM<input value='");
+		AppendEscaped(html, m_pMT32Pi->GetCurrentMT32ROMName());
+		html.Append("' disabled></label>");
+		html.Append("<span class='subgroup-title'>Reverb</span>");
+		html.Append("<label>Reverb<select id='rt_mt32_reverb_active'><option value='off'");
+		html.Append(SelectedAttr(!bMT32ReverbActive));
+		html.Append(">off</option><option value='on'");
+		html.Append(SelectedAttr(bMT32ReverbActive));
+		html.Append(">on</option></select></label>");
+		html.Append("<label>Reverb gain <input id='rt_mt32_reverb_gain' type='range' min='0' max='4' step='0.2' value='");
+		AppendEscaped(html, MT32ReverbGain);
+		html.Append("'><span id='rt_mt32_reverb_gain_val'>");
+		AppendEscaped(html, MT32ReverbGain);
+		html.Append("</span></label>");
+		html.Append("<span class='subgroup-title'>Emulation enhancements</span>");
+		html.Append("<label>Nice Amp<select id='rt_mt32_nice_amp'><option value='off'");
+		html.Append(SelectedAttr(!bMT32NiceAmp));
+		html.Append(">off</option><option value='on'");
+		html.Append(SelectedAttr(bMT32NiceAmp));
+		html.Append(">on</option></select></label>");
+		html.Append("<label>Nice Pan<select id='rt_mt32_nice_pan'><option value='off'");
+		html.Append(SelectedAttr(!bMT32NicePan));
+		html.Append(">off</option><option value='on'");
+		html.Append(SelectedAttr(bMT32NicePan));
+		html.Append(">on</option></select></label>");
+		html.Append("<label>Nice Mix<select id='rt_mt32_nice_mix'><option value='off'");
+		html.Append(SelectedAttr(!bMT32NiceMix));
+		html.Append(">off</option><option value='on'");
+		html.Append(SelectedAttr(bMT32NiceMix));
+		html.Append(">on</option></select></label>");
+		html.Append("<span class='subgroup-title'>Advanced emulation</span>");
+		html.Append("<label>DAC<select id='rt_mt32_dac_mode'><option value='0'");
+		html.Append(SelectedAttr(nMT32DACMode == 0));
+		html.Append(">NICE</option><option value='1'");
+		html.Append(SelectedAttr(nMT32DACMode == 1));
+		html.Append(">PURE</option><option value='2'");
+		html.Append(SelectedAttr(nMT32DACMode == 2));
+		html.Append(">GEN1</option><option value='3'");
+		html.Append(SelectedAttr(nMT32DACMode == 3));
+		html.Append(">GEN2</option></select></label>");
+		html.Append("<label>MIDI Delay<select id='rt_mt32_midi_delay'><option value='0'");
+		html.Append(SelectedAttr(nMT32MIDIDelay == 0));
+		html.Append(">IMMD</option><option value='1'");
+		html.Append(SelectedAttr(nMT32MIDIDelay == 1));
+		html.Append(">SHORT</option><option value='2'");
+		html.Append(SelectedAttr(nMT32MIDIDelay == 2));
+		html.Append(">ALL</option></select></label>");
+		html.Append("<label>Analog<select id='rt_mt32_analog_mode'><option value='0'");
+		html.Append(SelectedAttr(nMT32AnalogMode == 0));
+		html.Append(">DIG</option><option value='1'");
+		html.Append(SelectedAttr(nMT32AnalogMode == 1));
+		html.Append(">COARSE</option><option value='2'");
+		html.Append(SelectedAttr(nMT32AnalogMode == 2));
+		html.Append(">ACCUR</option><option value='3'");
+		html.Append(SelectedAttr(nMT32AnalogMode == 3));
+		html.Append(">OVR</option></select></label>");
+		html.Append("<label>Renderer<select id='rt_mt32_renderer_type'><option value='0'");
+		html.Append(SelectedAttr(nMT32RendererType == 0));
+		html.Append(">I16</option><option value='1'");
+		html.Append(SelectedAttr(nMT32RendererType == 1));
+		html.Append(">F32</option></select></label>");
+		html.Append("<label>Partials <input id='rt_mt32_partial_count' type='number' min='8' max='256' value='");
+		AppendEscaped(html, MT32PartialCount);
+		html.Append("'></label>");
+		html.Append("</div></section>");
 
-		HTML += "<section id='sf-section'><h2>SoundFont</h2><div class='grid'>";
-		HTML += "<label>SoundFont<select id='rt_soundfont_index'>";
+		html.Append("<section id='sf-section'><h2>SoundFont</h2><div class='grid'>");
+		html.Append("<label>SoundFont<select id='rt_soundfont_index'>");
 		for (size_t i = 0; i < nSoundFontCount; ++i)
 		{
 			CString Index; Index.Format("%d", static_cast<int>(i));
-			HTML += "<option value='";
-			HTML += Index;
-			HTML += "'";
-			HTML += SelectedAttr(i == nCurrentSoundFontIndex);
-			HTML += ">";
+			html.Append("<option value='");
+			html.Append(Index);
+			html.Append("'");
+			html.Append(SelectedAttr(i == nCurrentSoundFontIndex));
+			html.Append(">");
 			const char* pSoundFontName = m_pMT32Pi->GetSoundFontName(i);
-			AppendEscaped(HTML, pSoundFontName ? pSoundFontName : "(unnamed)");
-			HTML += "</option>";
+			AppendEscaped(html, pSoundFontName ? pSoundFontName : "(unnamed)");
+			html.Append("</option>");
 		}
 		if (nSoundFontCount == 0)
-			HTML += "<option value='0'>No SoundFonts</option>";
-		HTML += "</select></label>";
-		HTML += "<button type='button' id='sf-fav-btn' title='Toggle favorite' style='align-self:end;padding:4px 10px;font-size:18px;line-height:1;background:#0b1220;border:1px solid #334155;border-radius:6px;color:#facc15;cursor:pointer;'>&#9734;</button>";
-		HTML += "<div style='grid-column:1/-1;'><div id='sf-favs-wrap' style='display:none;'><div style='font-size:11px;color:#64748b;margin-bottom:4px;'>Favorites</div><div id='sf-favs' style='display:flex;flex-wrap:wrap;gap:4px;'></div></div></div>";
-		HTML += "<div id='sf-preview' style='grid-column:1/-1;background:#0b1220;border:1px solid #1e293b;border-radius:8px;padding:8px 12px;font-size:12px;color:#94a3b8;display:none;'>";
-		HTML += "<strong id='sf-prev-name' style='color:#7dd3fc;'></strong>";
-		HTML += "<div id='sf-prev-path' style='color:#4b5563;margin-top:2px;word-break:break-all;'></div>";
-		HTML += "<div id='sf-prev-size' style='margin-top:2px;'></div>";
-		HTML += "</div>";
-		HTML += "<label>Gain <input id='rt_sf_gain' type='range' min='0' max='5' step='0.05' value='";
-		AppendEscaped(HTML, SFGain);
-		HTML += "'><span id='rt_sf_gain_val'>";
-		AppendEscaped(HTML, SFGain);
-		HTML += "</span></label>";
-		HTML += "<span class='subgroup-title'>Reverb</span>";
-		HTML += "<label>Reverb<select id='rt_sf_reverb_active'><option value='off'";
-		HTML += SelectedAttr(!bReverbActive);
-		HTML += ">off</option><option value='on'";
-		HTML += SelectedAttr(bReverbActive);
-		HTML += ">on</option></select></label>";
-		HTML += "<label>Reverb room <input id='rt_sf_reverb_room' type='range' min='0' max='1' step='0.1' value='";
-		AppendEscaped(HTML, ReverbRoom);
-		HTML += "'><span id='rt_sf_reverb_room_val'>";
-		AppendEscaped(HTML, ReverbRoom);
-		HTML += "</span></label>";
-		HTML += "<label>Reverb level <input id='rt_sf_reverb_level' type='range' min='0' max='1' step='0.1' value='";
-		AppendEscaped(HTML, ReverbLevel);
-		HTML += "'><span id='rt_sf_reverb_level_val'>";
-		AppendEscaped(HTML, ReverbLevel);
-		HTML += "</span></label>";
-		HTML += "<label>Reverb damping <input id='rt_sf_reverb_damping' type='range' min='0' max='1' step='0.1' value='";
-		AppendEscaped(HTML, ReverbDamping);
-		HTML += "'><span id='rt_sf_reverb_damping_val'>";
-		AppendEscaped(HTML, ReverbDamping);
-		HTML += "</span></label>";
-		HTML += "<label>Reverb width <input id='rt_sf_reverb_width' type='range' min='0' max='100' step='1' value='";
-		AppendEscaped(HTML, ReverbWidth);
-		HTML += "'><span id='rt_sf_reverb_width_val'>";
-		AppendEscaped(HTML, ReverbWidth);
-		HTML += "</span></label>";
-		HTML += "<span class='subgroup-title'>Chorus</span>";
-		HTML += "<label>Chorus<select id='rt_sf_chorus_active'><option value='off'";
-		HTML += SelectedAttr(!bChorusActive);
-		HTML += ">off</option><option value='on'";
-		HTML += SelectedAttr(bChorusActive);
-		HTML += ">on</option></select></label>";
-		HTML += "<label>Chorus depth <input id='rt_sf_chorus_depth' type='range' min='0' max='20' step='1' value='";
-		AppendEscaped(HTML, ChorusDepth);
-		HTML += "'><span id='rt_sf_chorus_depth_val'>";
-		AppendEscaped(HTML, ChorusDepth);
-		HTML += "</span></label>";
-		HTML += "<label>Chorus level <input id='rt_sf_chorus_level' type='range' min='0' max='1' step='0.01' value='";
-		AppendEscaped(HTML, ChorusLevel);
-		HTML += "'><span id='rt_sf_chorus_level_val'>";
-		AppendEscaped(HTML, ChorusLevel);
-		HTML += "</span></label>";
-		HTML += "<label>Chorus voices <input id='rt_sf_chorus_voices' type='number' min='1' max='99' value='";
-		AppendEscaped(HTML, ChorusVoices);
-		HTML += "'></label>";
-		HTML += "<label>Chorus speed (Hz) <input id='rt_sf_chorus_speed' type='range' min='0.29' max='5' step='0.01' value='";
-		AppendEscaped(HTML, ChorusSpeed);
-		HTML += "'><span id='rt_sf_chorus_speed_val'>";
-		AppendEscaped(HTML, ChorusSpeed);
-		HTML += "</span></label>";
-		HTML += "<label>Tuning <select id='rt_sf_tuning'>";
-		HTML += "<option value='0'>Equal</option>";
-		HTML += "<option value='1'>Werckmeister III</option>";
-		HTML += "<option value='2'>Kirnberger III</option>";
-		HTML += "<option value='3'>Meantone 1/4</option>";
-		HTML += "<option value='4'>Pythagorean</option>";
-		HTML += "<option value='5'>Just Intonation</option>";
-		HTML += "<option value='6'>Vallotti</option>";
-		HTML += "</select></label>";
-		HTML += "<label>Polyphony <input id='rt_sf_polyphony' type='number' min='1' max='512' value='200'></label>";
-		HTML += "<label>Channel types<div id='sf_chtypes' style='display:flex;gap:3px;flex-wrap:wrap;margin-top:4px;'></div></label>";
-		HTML += "</div><div id='rtStatus' style='margin-top:10px;color:#86efac;'></div></section>";
-		HTML += "<script>const rs=document.getElementById('rtStatus');"
+			html.Append("<option value='0'>No SoundFonts</option>");
+		html.Append("</select></label>");
+		html.Append("<button type='button' id='sf-fav-btn' title='Toggle favorite' style='align-self:end;padding:4px 10px;font-size:18px;line-height:1;background:#0b1220;border:1px solid #334155;border-radius:6px;color:#facc15;cursor:pointer;'>&#9734;</button>");
+		html.Append("<div style='grid-column:1/-1;'><div id='sf-favs-wrap' style='display:none;'><div style='font-size:11px;color:#64748b;margin-bottom:4px;'>Favorites</div><div id='sf-favs' style='display:flex;flex-wrap:wrap;gap:4px;'></div></div></div>");
+		html.Append("<div id='sf-preview' style='grid-column:1/-1;background:#0b1220;border:1px solid #1e293b;border-radius:8px;padding:8px 12px;font-size:12px;color:#94a3b8;display:none;'>");
+		html.Append("<strong id='sf-prev-name' style='color:#7dd3fc;'></strong>");
+		html.Append("<div id='sf-prev-path' style='color:#4b5563;margin-top:2px;word-break:break-all;'></div>");
+		html.Append("<div id='sf-prev-size' style='margin-top:2px;'></div>");
+		html.Append("</div>");
+		html.Append("<label>Gain <input id='rt_sf_gain' type='range' min='0' max='5' step='0.05' value='");
+		AppendEscaped(html, SFGain);
+		html.Append("'><span id='rt_sf_gain_val'>");
+		AppendEscaped(html, SFGain);
+		html.Append("</span></label>");
+		html.Append("<span class='subgroup-title'>Reverb</span>");
+		html.Append("<label>Reverb<select id='rt_sf_reverb_active'><option value='off'");
+		html.Append(SelectedAttr(!bReverbActive));
+		html.Append(">off</option><option value='on'");
+		html.Append(SelectedAttr(bReverbActive));
+		html.Append(">on</option></select></label>");
+		html.Append("<label>Reverb room <input id='rt_sf_reverb_room' type='range' min='0' max='1' step='0.1' value='");
+		AppendEscaped(html, ReverbRoom);
+		html.Append("'><span id='rt_sf_reverb_room_val'>");
+		AppendEscaped(html, ReverbRoom);
+		html.Append("</span></label>");
+		html.Append("<label>Reverb level <input id='rt_sf_reverb_level' type='range' min='0' max='1' step='0.1' value='");
+		AppendEscaped(html, ReverbLevel);
+		html.Append("'><span id='rt_sf_reverb_level_val'>");
+		AppendEscaped(html, ReverbLevel);
+		html.Append("</span></label>");
+		html.Append("<label>Reverb damping <input id='rt_sf_reverb_damping' type='range' min='0' max='1' step='0.1' value='");
+		AppendEscaped(html, ReverbDamping);
+		html.Append("'><span id='rt_sf_reverb_damping_val'>");
+		AppendEscaped(html, ReverbDamping);
+		html.Append("</span></label>");
+		html.Append("<label>Reverb width <input id='rt_sf_reverb_width' type='range' min='0' max='100' step='1' value='");
+		AppendEscaped(html, ReverbWidth);
+		html.Append("'><span id='rt_sf_reverb_width_val'>");
+		AppendEscaped(html, ReverbWidth);
+		html.Append("</span></label>");
+		html.Append("<span class='subgroup-title'>Chorus</span>");
+		html.Append("<label>Chorus<select id='rt_sf_chorus_active'><option value='off'");
+		html.Append(SelectedAttr(!bChorusActive));
+		html.Append(">off</option><option value='on'");
+		html.Append(SelectedAttr(bChorusActive));
+		html.Append(">on</option></select></label>");
+		html.Append("<label>Chorus depth <input id='rt_sf_chorus_depth' type='range' min='0' max='20' step='1' value='");
+		AppendEscaped(html, ChorusDepth);
+		html.Append("'><span id='rt_sf_chorus_depth_val'>");
+		AppendEscaped(html, ChorusDepth);
+		html.Append("</span></label>");
+		html.Append("<label>Chorus level <input id='rt_sf_chorus_level' type='range' min='0' max='1' step='0.01' value='");
+		AppendEscaped(html, ChorusLevel);
+		html.Append("'><span id='rt_sf_chorus_level_val'>");
+		AppendEscaped(html, ChorusLevel);
+		html.Append("</span></label>");
+		html.Append("<label>Chorus voices <input id='rt_sf_chorus_voices' type='number' min='1' max='99' value='");
+		AppendEscaped(html, ChorusVoices);
+		html.Append("'></label>");
+		html.Append("<label>Chorus speed (Hz) <input id='rt_sf_chorus_speed' type='range' min='0.29' max='5' step='0.01' value='");
+		AppendEscaped(html, ChorusSpeed);
+		html.Append("'><span id='rt_sf_chorus_speed_val'>");
+		AppendEscaped(html, ChorusSpeed);
+		html.Append("</span></label>");
+		html.Append("<label>Tuning <select id='rt_sf_tuning'>");
+		html.Append("<option value='0'>Equal</option>");
+		html.Append("<option value='1'>Werckmeister III</option>");
+		html.Append("<option value='2'>Kirnberger III</option>");
+		html.Append("<option value='3'>Meantone 1/4</option>");
+		html.Append("<option value='4'>Pythagorean</option>");
+		html.Append("<option value='5'>Just Intonation</option>");
+		html.Append("<option value='6'>Vallotti</option>");
+		html.Append("</select></label>");
+		html.Append("<label>Polyphony <input id='rt_sf_polyphony' type='number' min='1' max='512' value='200'></label>");
+		html.Append("<label>Channel types<div id='sf_chtypes' style='display:flex;gap:3px;flex-wrap:wrap;margin-top:4px;'></div></label>");
+		html.Append("</div><div id='rtStatus' style='margin-top:10px;color:#86efac;'></div></section>");
+		html.Append("<script>const rs=document.getElementById('rtStatus'));"
 			"const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};"
 			"const setDisabled=(id,b)=>{const e=document.getElementById(id);if(e)e.disabled=!!b;};"
 			"const setSectionHidden=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('section-hidden',!!b);};"
-			"const setTabActive=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',!!b);};";
-		HTML += "const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_gain_val',Number(j.sf_gain).toFixed(2));setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_reverb_damping_val',Number(j.sf_reverb_damping).toFixed(1));setText('rt_sf_reverb_width_val',Math.round(Number(j.sf_reverb_width)));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_sf_chorus_level_val',Number(j.sf_chorus_level).toFixed(2));setText('rt_sf_chorus_speed_val',Number(j.sf_chorus_speed).toFixed(2));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':'soundfont';const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const sfg=document.getElementById('rt_sf_gain');if(sfg)sfg.value=Number(j.sf_gain).toFixed(2);const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const rtd=document.getElementById('rt_sf_reverb_damping');if(rtd)rtd.value=Number(j.sf_reverb_damping).toFixed(1);const rtw=document.getElementById('rt_sf_reverb_width');if(rtw)rtw.value=Math.round(Number(j.sf_reverb_width));const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const ctl=document.getElementById('rt_sf_chorus_level');if(ctl)ctl.value=Number(j.sf_chorus_level).toFixed(2);const ctv=document.getElementById('rt_sf_chorus_voices');if(ctv)ctv.value=j.sf_chorus_voices;const cts=document.getElementById('rt_sf_chorus_speed');if(cts)cts.value=Number(j.sf_chorus_speed).toFixed(2);const sft=document.getElementById('rt_sf_tuning');if(sft)sft.value=j.sf_tuning;const sfp=document.getElementById('rt_sf_polyphony');if(sfp)sfp.value=j.sf_polyphony;if(j.sf_percussion_mask!==undefined){var cg=document.getElementById('sf_chtypes');if(cg){if(!cg.children.length){for(var ci=0;ci<16;ci++){var btn=document.createElement('button');btn.type='button';btn.id='sf_ch'+ci;btn.style.cssText='min-width:30px;padding:2px 4px;font-size:11px;border:1px solid #334155;border-radius:4px;cursor:pointer;';btn.dataset.ch=ci;btn.addEventListener('click',function(){var c=Number(this.dataset.ch);var cur=Number(this.dataset.drum);rtApply('sf_channel_type',c+','+(cur?0:1));});cg.appendChild(btn);}}for(var ci=0;ci<16;ci++){var b=document.getElementById('sf_ch'+ci);if(b){var isDrum=(j.sf_percussion_mask>>ci)&1;b.dataset.drum=isDrum;b.textContent=(ci+1)+(isDrum?'D':'M');b.style.background=isDrum?'#f59e0b':'#334155';b.style.color=isDrum?'#000':'#e2e8f0';b.disabled=!sf;}}}}const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_gain',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_reverb_damping',!sf);setDisabled('rt_sf_reverb_width',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setDisabled('rt_sf_chorus_level',!sf);setDisabled('rt_sf_chorus_voices',!sf);setDisabled('rt_sf_chorus_speed',!sf);setDisabled('rt_sf_tuning',!sf);setDisabled('rt_sf_polyphony',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);var dual=!!j.mixer_dual_mode;if(dual){document.querySelectorAll('#mt32-section input,#mt32-section select,#sf-section input,#sf-section select').forEach(function(e){e.disabled=false;});setSectionHidden('mt32-section',false);setSectionHidden('sf-section',false);setTabActive('tab-mt32',true);setTabActive('tab-sf',true);}var mxl=document.getElementById('rt_mixer_label');if(mxl){var pn=['All MT-32','All FluidSynth','Split GM','Custom'];if(j.mixer_enabled){mxl.textContent=pn[j.mixer_preset]||'On';mxl.style.color='#86efac';}else{mxl.textContent='OFF';mxl.style.color='#64748b';}}var mxb=document.getElementById('mx-banner');if(mxb)mxb.style.display=dual?'block':'none';};";
-		HTML += "const rtRefresh=async()=>{try{const r=await fetch('/api/runtime/status',{cache:'no-store'});if(!r.ok)throw new Error('http');const j=await r.json();applyRuntimeState(j);}catch(err){if(rs)rs.textContent='Error reading runtime status';}};";
-		HTML += "const rtApply=async(param,value)=>{if(!rs)return;rs.textContent='Applying...';const body=new URLSearchParams({param,value:String(value)});try{const r=await fetch('/api/runtime/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();if(!r.ok||!j.ok){rs.textContent='Could not apply '+param;showToast('Error: '+param,false);return;}applyRuntimeState(j);rs.textContent='Applied: '+param;showToast('Applied: '+param);}catch(err){rs.textContent='Error applying '+param;showToast('Error',false);}};";
-		HTML += "const bindChange=(id,param)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('change',()=>rtApply(param,el.value));};const bindRange=(id,param,formatter)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('input',()=>{if(formatter)formatter(el.value);});el.addEventListener('change',()=>rtApply(param,el.value));};";
-		HTML += "const loadSFPreview=(idx)=>{const pv=document.getElementById('sf-preview');if(!pv)return;pv.style.display='none';if(idx<0)return;";
-		HTML += "_qs('/api/soundfont/info','index='+idx,function(j){if(!j)return;";
-		HTML += "var n=document.getElementById('sf-prev-name');if(n)n.textContent=j.name||'';";
-		HTML += "var pa=document.getElementById('sf-prev-path');if(pa)pa.textContent=j.path||'';";
-		HTML += "var sz=document.getElementById('sf-prev-size');if(sz)sz.textContent=j.size_kb>0?j.size_kb+' KB':'';";
-		HTML += "pv.style.display='';});};";
-		HTML += "const sfSel=document.getElementById('rt_soundfont_index');if(sfSel){sfSel.addEventListener('change',function(){loadSFPreview(Number(this.value));updateFavBtn();});}";
-		HTML += "const FAV_KEY='sfFavorites';";
-		HTML += "const loadFavs=()=>{try{return JSON.parse(localStorage.getItem(FAV_KEY)||'[]');}catch(e){return[];}};";
-		HTML += "const saveFavs=(a)=>{try{localStorage.setItem(FAV_KEY,JSON.stringify(a));}catch(e){}};";
-		HTML += "const currentSFName=()=>{const s=document.getElementById('rt_soundfont_index');if(!s)return'';const o=s.options[s.selectedIndex];return o?o.textContent.trim():'';};";
-		HTML += "const currentSFIndex=()=>{const s=document.getElementById('rt_soundfont_index');return s?Number(s.value):-1;};";
-		HTML += "const updateFavBtn=()=>{const nm=currentSFName();const favs=loadFavs();const btn=document.getElementById('sf-fav-btn');if(!btn)return;const isFav=favs.some(f=>f.name===nm);btn.innerHTML=isFav?'&#9733;':'&#9734;';btn.title=isFav?'Remove from favorites':'Add to favorites';};";
-		HTML += "const renderFavs=()=>{const favs=loadFavs();const wrap=document.getElementById('sf-favs-wrap');const cont=document.getElementById('sf-favs');if(!wrap||!cont)return;cont.innerHTML='';if(!favs.length){wrap.style.display='none';return;}wrap.style.display='';favs.forEach((f,fi)=>{const btn=document.createElement('button');btn.type='button';btn.title=f.path||f.name;btn.style.cssText='padding:3px 8px;font-size:12px;background:#1e293b;border:1px solid #334155;border-radius:5px;color:#7dd3fc;cursor:pointer;display:flex;align-items:center;gap:4px;';const star=document.createElement('span');star.textContent='\u2605';star.style.color='#facc15';btn.appendChild(star);btn.appendChild(document.createTextNode(f.name));btn.addEventListener('click',()=>{const sel=document.getElementById('rt_soundfont_index');if(!sel)return;for(let i=0;i<sel.options.length;i++){if(sel.options[i].textContent.trim()===f.name){sel.value=String(i);loadSFPreview(i);rtApply('soundfont_index',String(i));updateFavBtn();return;}}showToast('SoundFont not found: '+f.name,false);});const rm=document.createElement('button');rm.type='button';rm.title='Remove';rm.textContent='\u00d7';rm.style.cssText='margin-left:2px;background:none;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:0 2px;';rm.addEventListener('click',(e)=>{e.stopPropagation();const a=loadFavs();a.splice(fi,1);saveFavs(a);renderFavs();updateFavBtn();});btn.appendChild(rm);cont.appendChild(btn);});};";
-		HTML += "const sfFavBtn=document.getElementById('sf-fav-btn');if(sfFavBtn){sfFavBtn.addEventListener('click',()=>{const nm=currentSFName();if(!nm)return;const idx=currentSFIndex();let favs=loadFavs();const pos=favs.findIndex(f=>f.name===nm);if(pos>=0){favs.splice(pos,1);}else{_qs('/api/soundfont/info','index='+idx,function(j){favs.push({name:nm,path:j?j.path:''});saveFavs(favs);renderFavs();updateFavBtn();});return;}saveFavs(favs);renderFavs();updateFavBtn();});}";
-		HTML += "renderFavs();updateFavBtn();";
-		HTML += "const tabMT32=document.getElementById('tab-mt32');if(tabMT32)tabMT32.addEventListener('click',()=>rtApply('active_synth','mt32'));const tabSF=document.getElementById('tab-sf');if(tabSF)tabSF.addEventListener('click',()=>rtApply('active_synth','soundfont'));";
-		HTML += "bindChange('rt_active_synth','active_synth');bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');bindChange('rt_sf_chorus_voices','sf_chorus_voices');bindChange('rt_sf_tuning','sf_tuning');bindChange('rt_sf_polyphony','sf_polyphony');bindChange('rt_mt32_reverb_active','mt32_reverb_active');bindChange('rt_mt32_nice_amp','mt32_nice_amp');bindChange('rt_mt32_nice_pan','mt32_nice_pan');bindChange('rt_mt32_nice_mix','mt32_nice_mix');bindChange('rt_mt32_dac_mode','mt32_dac_mode');bindChange('rt_mt32_midi_delay','mt32_midi_delay');bindChange('rt_mt32_analog_mode','mt32_analog_mode');bindChange('rt_mt32_renderer_type','mt32_renderer_type');bindChange('rt_mt32_partial_count','mt32_partial_count');";
-		HTML += "bindRange('rt_master_volume','master_volume',(v)=>setText('rt_master_volume_val',v));bindRange('rt_sf_gain','sf_gain',(v)=>setText('rt_sf_gain_val',Number(v).toFixed(2)));bindRange('rt_sf_reverb_room','sf_reverb_room',(v)=>setText('rt_sf_reverb_room_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_level','sf_reverb_level',(v)=>setText('rt_sf_reverb_level_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_damping','sf_reverb_damping',(v)=>setText('rt_sf_reverb_damping_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_width','sf_reverb_width',(v)=>setText('rt_sf_reverb_width_val',Math.round(Number(v))));bindRange('rt_sf_chorus_depth','sf_chorus_depth',(v)=>setText('rt_sf_chorus_depth_val',Math.round(Number(v))));bindRange('rt_sf_chorus_level','sf_chorus_level',(v)=>setText('rt_sf_chorus_level_val',Number(v).toFixed(2)));bindRange('rt_sf_chorus_speed','sf_chorus_speed',(v)=>setText('rt_sf_chorus_speed_val',Number(v).toFixed(2)));bindRange('rt_mt32_reverb_gain','mt32_reverb_gain',(v)=>setText('rt_mt32_reverb_gain_val',Number(v).toFixed(2)));rtRefresh();setInterval(rtRefresh,3000);</script>";
-		HTML += "</main></body></html>";
+			"const setTabActive=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',!!b);};");
+		html.Append("const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_gain_val',Number(j.sf_gain).toFixed(2));setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_reverb_damping_val',Number(j.sf_reverb_damping).toFixed(1));setText('rt_sf_reverb_width_val',Math.round(Number(j.sf_reverb_width)));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_sf_chorus_level_val',Number(j.sf_chorus_level).toFixed(2));setText('rt_sf_chorus_speed_val',Number(j.sf_chorus_speed).toFixed(2));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':'soundfont';const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const sfg=document.getElementById('rt_sf_gain');if(sfg)sfg.value=Number(j.sf_gain).toFixed(2);const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const rtd=document.getElementById('rt_sf_reverb_damping');if(rtd)rtd.value=Number(j.sf_reverb_damping).toFixed(1);const rtw=document.getElementById('rt_sf_reverb_width');if(rtw)rtw.value=Math.round(Number(j.sf_reverb_width));const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const ctl=document.getElementById('rt_sf_chorus_level');if(ctl)ctl.value=Number(j.sf_chorus_level).toFixed(2);const ctv=document.getElementById('rt_sf_chorus_voices');if(ctv)ctv.value=j.sf_chorus_voices;const cts=document.getElementById('rt_sf_chorus_speed');if(cts)cts.value=Number(j.sf_chorus_speed).toFixed(2);const sft=document.getElementById('rt_sf_tuning');if(sft)sft.value=j.sf_tuning;const sfp=document.getElementById('rt_sf_polyphony');if(sfp)sfp.value=j.sf_polyphony;if(j.sf_percussion_mask!==undefined){var cg=document.getElementById('sf_chtypes');if(cg){if(!cg.children.length){for(var ci=0;ci<16;ci++){var btn=document.createElement('button');btn.type='button';btn.id='sf_ch'+ci;btn.style.cssText='min-width:30px;padding:2px 4px;font-size:11px;border:1px solid #334155;border-radius:4px;cursor:pointer;';btn.dataset.ch=ci;btn.addEventListener('click',function(){var c=Number(this.dataset.ch);var cur=Number(this.dataset.drum);rtApply('sf_channel_type',c+','+(cur?0:1));});cg.appendChild(btn);}}for(var ci=0;ci<16;ci++){var b=document.getElementById('sf_ch'+ci);if(b){var isDrum=(j.sf_percussion_mask>>ci)&1;b.dataset.drum=isDrum;b.textContent=(ci+1)+(isDrum?'D':'M');b.style.background=isDrum?'#f59e0b':'#334155';b.style.color=isDrum?'#000':'#e2e8f0';b.disabled=!sf;}}}}const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_gain',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_reverb_damping',!sf);setDisabled('rt_sf_reverb_width',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setDisabled('rt_sf_chorus_level',!sf);setDisabled('rt_sf_chorus_voices',!sf);setDisabled('rt_sf_chorus_speed',!sf);setDisabled('rt_sf_tuning',!sf);setDisabled('rt_sf_polyphony',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);var dual=!!j.mixer_dual_mode;if(dual){document.querySelectorAll('#mt32-section input,#mt32-section select,#sf-section input,#sf-section select').forEach(function(e){e.disabled=false;});setSectionHidden('mt32-section',false);setSectionHidden('sf-section',false);setTabActive('tab-mt32',true);setTabActive('tab-sf',true);}var mxl=document.getElementById('rt_mixer_label');if(mxl){var pn=['All MT-32','All FluidSynth','Split GM','Custom'];if(j.mixer_enabled){mxl.textContent=pn[j.mixer_preset]||'On';mxl.style.color='#86efac';}else{mxl.textContent='OFF';mxl.style.color='#64748b';}}var mxb=document.getElementById('mx-banner');if(mxb)mxb.style.display=dual?'block':'none';};");
+		html.Append("const rtRefresh=async()=>{try{const r=await fetch('/api/runtime/status',{cache:'no-store'});if(!r.ok)throw new Error('http');const j=await r.json();applyRuntimeState(j);}catch(err){if(rs)rs.textContent='Error reading runtime status';}};");
+		html.Append("const rtApply=async(param,value)=>{if(!rs)return;rs.textContent='Applying...';const body=new URLSearchParams({param,value:String(value)});try{const r=await fetch('/api/runtime/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();if(!r.ok||!j.ok){rs.textContent='Could not apply '+param;showToast('Error: '+param,false);return;}applyRuntimeState(j);rs.textContent='Applied: '+param;showToast('Applied: '+param);}catch(err){rs.textContent='Error applying '+param;showToast('Error',false);}};");
+		html.Append("const bindChange=(id,param)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('change',()=>rtApply(param,el.value));};const bindRange=(id,param,formatter)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('input',()=>{if(formatter)formatter(el.value);});el.addEventListener('change',()=>rtApply(param,el.value));};");
+		html.Append("const loadSFPreview=(idx)=>{const pv=document.getElementById('sf-preview');if(!pv)return;pv.style.display='none';if(idx<0)return;");
+		html.Append("_qs('/api/soundfont/info','index='+idx,function(j){if(!j)return;");
+		html.Append("var n=document.getElementById('sf-prev-name');if(n)n.textContent=j.name||'';");
+		html.Append("var pa=document.getElementById('sf-prev-path');if(pa)pa.textContent=j.path||'';");
+		html.Append("var sz=document.getElementById('sf-prev-size');if(sz)sz.textContent=j.size_kb>0?j.size_kb+' KB':'';");
+		html.Append("pv.style.display='';});};");
+		html.Append("const sfSel=document.getElementById('rt_soundfont_index');if(sfSel){sfSel.addEventListener('change',function(){loadSFPreview(Number(this.value));updateFavBtn();});}");
+		html.Append("const FAV_KEY='sfFavorites';");
+		html.Append("const loadFavs=()=>{try{return JSON.parse(localStorage.getItem(FAV_KEY)||'[]');}catch(e){return[];}};");
+		html.Append("const saveFavs=(a)=>{try{localStorage.setItem(FAV_KEY,JSON.stringify(a));}catch(e){}};");
+		html.Append("const currentSFName=()=>{const s=document.getElementById('rt_soundfont_index');if(!s)return'';const o=s.options[s.selectedIndex];return o?o.textContent.trim():'';};");
+		html.Append("const currentSFIndex=()=>{const s=document.getElementById('rt_soundfont_index');return s?Number(s.value):-1;};");
+		html.Append("const updateFavBtn=()=>{const nm=currentSFName();const favs=loadFavs();const btn=document.getElementById('sf-fav-btn');if(!btn)return;const isFav=favs.some(f=>f.name===nm);btn.innerHTML=isFav?'&#9733;':'&#9734;';btn.title=isFav?'Remove from favorites':'Add to favorites';};");
+		html.Append("const renderFavs=()=>{const favs=loadFavs();const wrap=document.getElementById('sf-favs-wrap');const cont=document.getElementById('sf-favs');if(!wrap||!cont)return;cont.innerHTML='';if(!favs.length){wrap.style.display='none';return;}wrap.style.display='';favs.forEach((f,fi)=>{const btn=document.createElement('button');btn.type='button';btn.title=f.path||f.name;btn.style.cssText='padding:3px 8px;font-size:12px;background:#1e293b;border:1px solid #334155;border-radius:5px;color:#7dd3fc;cursor:pointer;display:flex;align-items:center;gap:4px;';const star=document.createElement('span');star.textContent='\u2605';star.style.color='#facc15';btn.appendChild(star);btn.appendChild(document.createTextNode(f.name));btn.addEventListener('click',()=>{const sel=document.getElementById('rt_soundfont_index');if(!sel)return;for(let i=0;i<sel.options.length;i++){if(sel.options[i].textContent.trim()===f.name){sel.value=String(i);loadSFPreview(i);rtApply('soundfont_index',String(i));updateFavBtn();return;}}showToast('SoundFont not found: '+f.name,false);});const rm=document.createElement('button');rm.type='button';rm.title='Remove';rm.textContent='\u00d7';rm.style.cssText='margin-left:2px;background:none;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:0 2px;';rm.addEventListener('click',(e)=>{e.stopPropagation();const a=loadFavs();a.splice(fi,1);saveFavs(a);renderFavs();updateFavBtn();});btn.appendChild(rm);cont.appendChild(btn);});};");
+		html.Append("const sfFavBtn=document.getElementById('sf-fav-btn');if(sfFavBtn){sfFavBtn.addEventListener('click',()=>{const nm=currentSFName();if(!nm)return;const idx=currentSFIndex();let favs=loadFavs();const pos=favs.findIndex(f=>f.name===nm);if(pos>=0){favs.splice(pos,1);}else{_qs('/api/soundfont/info','index='+idx,function(j){favs.push({name:nm,path:j?j.path:''});saveFavs(favs);renderFavs();updateFavBtn();});return;}saveFavs(favs);renderFavs();updateFavBtn();});}");
+		html.Append("renderFavs();updateFavBtn();");
+		html.Append("const tabMT32=document.getElementById('tab-mt32');if(tabMT32)tabMT32.addEventListener('click',()=>rtApply('active_synth','mt32'));const tabSF=document.getElementById('tab-sf');if(tabSF)tabSF.addEventListener('click',()=>rtApply('active_synth','soundfont'));");
+		html.Append("bindChange('rt_active_synth','active_synth');bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');bindChange('rt_sf_chorus_voices','sf_chorus_voices');bindChange('rt_sf_tuning','sf_tuning');bindChange('rt_sf_polyphony','sf_polyphony');bindChange('rt_mt32_reverb_active','mt32_reverb_active');bindChange('rt_mt32_nice_amp','mt32_nice_amp');bindChange('rt_mt32_nice_pan','mt32_nice_pan');bindChange('rt_mt32_nice_mix','mt32_nice_mix');bindChange('rt_mt32_dac_mode','mt32_dac_mode');bindChange('rt_mt32_midi_delay','mt32_midi_delay');bindChange('rt_mt32_analog_mode','mt32_analog_mode');bindChange('rt_mt32_renderer_type','mt32_renderer_type');bindChange('rt_mt32_partial_count','mt32_partial_count');");
+		html.Append("bindRange('rt_master_volume','master_volume',(v)=>setText('rt_master_volume_val',v));bindRange('rt_sf_gain','sf_gain',(v)=>setText('rt_sf_gain_val',Number(v).toFixed(2)));bindRange('rt_sf_reverb_room','sf_reverb_room',(v)=>setText('rt_sf_reverb_room_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_level','sf_reverb_level',(v)=>setText('rt_sf_reverb_level_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_damping','sf_reverb_damping',(v)=>setText('rt_sf_reverb_damping_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_width','sf_reverb_width',(v)=>setText('rt_sf_reverb_width_val',Math.round(Number(v))));bindRange('rt_sf_chorus_depth','sf_chorus_depth',(v)=>setText('rt_sf_chorus_depth_val',Math.round(Number(v))));bindRange('rt_sf_chorus_level','sf_chorus_level',(v)=>setText('rt_sf_chorus_level_val',Number(v).toFixed(2)));bindRange('rt_sf_chorus_speed','sf_chorus_speed',(v)=>setText('rt_sf_chorus_speed_val',Number(v).toFixed(2)));bindRange('rt_mt32_reverb_gain','mt32_reverb_gain',(v)=>setText('rt_mt32_reverb_gain_val',Number(v).toFixed(2)));rtRefresh();setInterval(rtRefresh,3000);</script>");
+		html.Append("</main></body></html>");
 
-		const unsigned nBodyLength = HTML.GetLength();
-		if (*pLength < nBodyLength)
+		if (!html.bOk)
 			return HTTPInternalServerError;
-
-		memcpy(pBuffer, static_cast<const char*>(HTML), nBodyLength);
-		*pLength = nBodyLength;
+		*pLength = html.Length();
 		*ppContentType = "text/html; charset=utf-8";
 		return HTTPOK;
 }
@@ -3462,95 +3487,95 @@ THTTPStatus CWebDaemon::BuildConfigPage(u8* pBuffer, unsigned* pLength, const ch
 		if (!pConfig)
 			return HTTPInternalServerError;
 
-		CString HTML;
-		HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
-		HTML += "<title>mt32-pi config</title><link rel='stylesheet' href='/app.css'></head><body><main>";
-		HTML += "<script src='/app.js'></script>";
-		HTML += "<h1>Configure mt32-pi</h1><p>Saves changes to <code>mt32-pi.cfg</code> and creates a backup <code>mt32-pi.cfg.bak</code>.</p>";
-		HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
-		HTML += "<form id='cfgForm'>";
+		HtmlWriter html(pBuffer, *pLength);
+		html.Append("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+		html.Append("<title>mt32-pi config</title><link rel='stylesheet' href='/app.css'></head><body><main>");
+		html.Append("<script src='/app.js'></script>");
+		html.Append("<h1>Configure mt32-pi</h1><p>Saves changes to <code>mt32-pi.cfg</code> and creates a backup <code>mt32-pi.cfg.bak</code>.</p>");
+		html.Append("<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>");
+		html.Append("<form id='cfgForm'>");
 
 		// ---- [system] ----
 		CString SysI2CBaud; SysI2CBaud.Format("%d", pConfig->SystemI2CBaudRate);
 		CString SysPowerSave; SysPowerSave.Format("%d", pConfig->SystemPowerSaveTimeout);
-		HTML += "<section><h2>System</h2><div class='grid'>";
-		HTML += "<label>Default synth<small>mt32: MT-32 via Munt emulator; soundfont: FluidSynth. Falls back to first available synth if chosen one is unavailable.</small><select name='default_synth'>";
-		HTML += "<option value='mt32'"; HTML += SelectedAttr(pConfig->SystemDefaultSynth == CConfig::TSystemDefaultSynth::MT32); HTML += ">MT-32</option>";
-		HTML += "<option value='soundfont'"; HTML += SelectedAttr(pConfig->SystemDefaultSynth == CConfig::TSystemDefaultSynth::SoundFont); HTML += ">SoundFont</option>";
-		HTML += "</select></label>";
-		HTML += "<label>Verbose<small>on: more info on LCD at boot and on errors. May hide the boot logo on small displays.</small><select name='system_verbose'><option value='off'"; HTML += SelectedAttr(!pConfig->SystemVerbose); HTML += ">off</option><option value='on'"; HTML += SelectedAttr(pConfig->SystemVerbose); HTML += ">on</option></select></label>";
-		HTML += "<label>USB<small>on: enables USB support (MIDI, keyboards, etc.). Disable to speed up boot if USB is not needed.</small><select name='system_usb'><option value='on'"; HTML += SelectedAttr(pConfig->SystemUSB); HTML += ">on</option><option value='off'"; HTML += SelectedAttr(!pConfig->SystemUSB); HTML += ">off</option></select></label>";
-		HTML += "<label>I2C baud rate<small>Bus speed in Hz. 400000 = fast mode. Use 1000000 for high-res graphic LCDs. Range: 100000-1000000</small><input name='system_i2c_baud_rate' type='number' value='"; AppendEscaped(HTML, SysI2CBaud); HTML += "'></label>";
-		HTML += "<label>Power save timeout (s)<small>Seconds of silence before slowing CPU and turning off backlight. 0 = disabled. Range: 0-3600</small><input name='system_power_save_timeout' type='number' value='"; AppendEscaped(HTML, SysPowerSave); HTML += "'></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>System</h2><div class='grid'>");
+		html.Append("<label>Default synth<small>mt32: MT-32 via Munt emulator; soundfont: FluidSynth. Falls back to first available synth if chosen one is unavailable.</small><select name='default_synth'>");
+		html.Append("<option value='mt32'"); html.Append(SelectedAttr(pConfig->SystemDefaultSynth == CConfig::TSystemDefaultSynth::MT32)); html.Append(">MT-32</option>");
+		html.Append("<option value='soundfont'"); html.Append(SelectedAttr(pConfig->SystemDefaultSynth == CConfig::TSystemDefaultSynth::SoundFont)); html.Append(">SoundFont</option>");
+		html.Append("</select></label>");
+		html.Append("<label>Verbose<small>on: more info on LCD at boot and on errors. May hide the boot logo on small displays.</small><select name='system_verbose'><option value='off'"); html.Append(SelectedAttr(!pConfig->SystemVerbose)); html.Append(">off</option><option value='on'"); html.Append(SelectedAttr(pConfig->SystemVerbose)); html.Append(">on</option></select></label>");
+		html.Append("<label>USB<small>on: enables USB support (MIDI, keyboards, etc.). Disable to speed up boot if USB is not needed.</small><select name='system_usb'><option value='on'"); html.Append(SelectedAttr(pConfig->SystemUSB)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->SystemUSB)); html.Append(">off</option></select></label>");
+		html.Append("<label>I2C baud rate<small>Bus speed in Hz. 400000 = fast mode. Use 1000000 for high-res graphic LCDs. Range: 100000-1000000</small><input name='system_i2c_baud_rate' type='number' value='"); AppendEscaped(html, SysI2CBaud); html.Append("'></label>");
+		html.Append("<label>Power save timeout (s)<small>Seconds of silence before slowing CPU and turning off backlight. 0 = disabled. Range: 0-3600</small><input name='system_power_save_timeout' type='number' value='"); AppendEscaped(html, SysPowerSave); html.Append("'></label>");
+		html.Append("</div></section>");
 
 		// ---- [audio] ----
 		CString AudioSR; AudioSR.Format("%d", pConfig->AudioSampleRate);
 		CString AudioCS; AudioCS.Format("%d", pConfig->AudioChunkSize);
-		HTML += "<section><h2>Audio</h2><div class='grid'>";
-		HTML += "<label>Output device<small>pwm: headphone jack (Pi 3B/4); hdmi: HDMI audio; i2s: external I2S DAC (HiFiBerry, etc.)</small><select name='audio_output_device'>";
-		HTML += "<option value='pwm'";  HTML += SelectedAttr(pConfig->AudioOutputDevice == CConfig::TAudioOutputDevice::PWM);  HTML += ">PWM</option>";
-		HTML += "<option value='hdmi'"; HTML += SelectedAttr(pConfig->AudioOutputDevice == CConfig::TAudioOutputDevice::HDMI); HTML += ">HDMI</option>";
-		HTML += "<option value='i2s'";  HTML += SelectedAttr(pConfig->AudioOutputDevice == CConfig::TAudioOutputDevice::I2S);  HTML += ">I2S</option>";
-		HTML += "</select></label>";
-		HTML += "<label>Sample rate (Hz)<small>PWM: 22050-192000; HDMI: 48000 only; I2S: depends on DAC. MT-32 uses 32000 Hz internally (resampled). Range: 32000-192000</small><input name='audio_sample_rate' type='number' value='"; AppendEscaped(HTML, AudioSR); HTML += "'></label>";
-		HTML += "<label>Chunk size<small>Samples per audio buffer. Lower = lower latency. Min: PWM=2, I2S=32, HDMI=384 (multiple). Latency = chunk/2/Hz*1000ms. Range: 2-2048</small><input name='audio_chunk_size' type='number' value='"; AppendEscaped(HTML, AudioCS); HTML += "'></label>";
-		HTML += "<label>Reversed stereo<small>on: swaps left/right channels. Use if hardware has channels connected in reverse.</small><select name='audio_reversed_stereo'><option value='off'"; HTML += SelectedAttr(!pConfig->AudioReversedStereo); HTML += ">off</option><option value='on'"; HTML += SelectedAttr(pConfig->AudioReversedStereo); HTML += ">on</option></select></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>Audio</h2><div class='grid'>");
+		html.Append("<label>Output device<small>pwm: headphone jack (Pi 3B/4); hdmi: HDMI audio; i2s: external I2S DAC (HiFiBerry, etc.)</small><select name='audio_output_device'>");
+		html.Append("<option value='pwm'");  html.Append(SelectedAttr(pConfig->AudioOutputDevice == CConfig::TAudioOutputDevice::PWM));  html.Append(">PWM</option>");
+		html.Append("<option value='hdmi'"); html.Append(SelectedAttr(pConfig->AudioOutputDevice == CConfig::TAudioOutputDevice::HDMI)); html.Append(">HDMI</option>");
+		html.Append("<option value='i2s'");  html.Append(SelectedAttr(pConfig->AudioOutputDevice == CConfig::TAudioOutputDevice::I2S));  html.Append(">I2S</option>");
+		html.Append("</select></label>");
+		html.Append("<label>Sample rate (Hz)<small>PWM: 22050-192000; HDMI: 48000 only; I2S: depends on DAC. MT-32 uses 32000 Hz internally (resampled). Range: 32000-192000</small><input name='audio_sample_rate' type='number' value='"); AppendEscaped(html, AudioSR); html.Append("'></label>");
+		html.Append("<label>Chunk size<small>Samples per audio buffer. Lower = lower latency. Min: PWM=2, I2S=32, HDMI=384 (multiple). Latency = chunk/2/Hz*1000ms. Range: 2-2048</small><input name='audio_chunk_size' type='number' value='"); AppendEscaped(html, AudioCS); html.Append("'></label>");
+		html.Append("<label>Reversed stereo<small>on: swaps left/right channels. Use if hardware has channels connected in reverse.</small><select name='audio_reversed_stereo'><option value='off'"); html.Append(SelectedAttr(!pConfig->AudioReversedStereo)); html.Append(">off</option><option value='on'"); html.Append(SelectedAttr(pConfig->AudioReversedStereo)); html.Append(">on</option></select></label>");
+		html.Append("</div></section>");
 
 		// ---- [midi] ----
 		CString MIDIGPIOBaud; MIDIGPIOBaud.Format("%d", pConfig->MIDIGPIOBaudRate);
 		CString MIDIUSBBaud;  MIDIUSBBaud.Format("%d", pConfig->MIDIUSBSerialBaudRate);
-		HTML += "<section><h2>MIDI</h2><div class='grid'>";
-		HTML += "<label>GPIO baud rate<small>Baud rate for GPIO MIDI. Standard DIN MIDI: 31250. SoftMPU serial mode: 38400. Range: 300-4000000</small><input name='midi_gpio_baud_rate' type='number' value='"; AppendEscaped(HTML, MIDIGPIOBaud); HTML += "'></label>";
-		HTML += "<label>GPIO thru<small>on: retransmits on GPIO Tx everything received on Rx. Useful for debugging or passing MIDI to another synth.</small><select name='midi_gpio_thru'><option value='off'"; HTML += SelectedAttr(!pConfig->MIDIGPIOThru); HTML += ">off</option><option value='on'"; HTML += SelectedAttr(pConfig->MIDIGPIOThru); HTML += ">on</option></select></label>";
-		HTML += "<label>USB serial baud rate<small>Baud rate for MIDI via USB-serial adapter. SoftMPU serial mode: 38400. Range: 9600-115200</small><input name='midi_usb_serial_baud_rate' type='number' value='"; AppendEscaped(HTML, MIDIUSBBaud); HTML += "'></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>MIDI</h2><div class='grid'>");
+		html.Append("<label>GPIO baud rate<small>Baud rate for GPIO MIDI. Standard DIN MIDI: 31250. SoftMPU serial mode: 38400. Range: 300-4000000</small><input name='midi_gpio_baud_rate' type='number' value='"); AppendEscaped(html, MIDIGPIOBaud); html.Append("'></label>");
+		html.Append("<label>GPIO thru<small>on: retransmits on GPIO Tx everything received on Rx. Useful for debugging or passing MIDI to another synth.</small><select name='midi_gpio_thru'><option value='off'"); html.Append(SelectedAttr(!pConfig->MIDIGPIOThru)); html.Append(">off</option><option value='on'"); html.Append(SelectedAttr(pConfig->MIDIGPIOThru)); html.Append(">on</option></select></label>");
+		html.Append("<label>USB serial baud rate<small>Baud rate for MIDI via USB-serial adapter. SoftMPU serial mode: 38400. Range: 9600-115200</small><input name='midi_usb_serial_baud_rate' type='number' value='"); AppendEscaped(html, MIDIUSBBaud); html.Append("'></label>");
+		html.Append("</div></section>");
 
 		// ---- [control] ----
 		CString CtrlSwitchTO; CtrlSwitchTO.Format("%d", pConfig->ControlSwitchTimeout);
-		HTML += "<section><h2>Control</h2><div class='grid'>";
-		HTML += "<label>Control scheme<small>none: no physical controls; simple_buttons: 4-button scheme; simple_encoder: 2 buttons + rotary encoder</small><select name='control_scheme'>";
-		HTML += "<option value='none'"; HTML += SelectedAttr(pConfig->ControlScheme == CConfig::TControlScheme::None); HTML += ">none</option>";
-		HTML += "<option value='simple_buttons'"; HTML += SelectedAttr(pConfig->ControlScheme == CConfig::TControlScheme::SimpleButtons); HTML += ">simple_buttons</option>";
-		HTML += "<option value='simple_encoder'"; HTML += SelectedAttr(pConfig->ControlScheme == CConfig::TControlScheme::SimpleEncoder); HTML += ">simple_encoder</option>";
-		HTML += "</select></label>";
-		HTML += "<label>Encoder type<small>Gray-code cycle per click. quarter: 4 clicks = 1 step; half: 2 clicks; full: 1 click = 1 step. Depends on your encoder hardware.</small><select name='encoder_type'>";
-		HTML += "<option value='quarter'"; HTML += SelectedAttr(pConfig->ControlEncoderType == CConfig::TEncoderType::Quarter); HTML += ">quarter</option>";
-		HTML += "<option value='half'";    HTML += SelectedAttr(pConfig->ControlEncoderType == CConfig::TEncoderType::Half);    HTML += ">half</option>";
-		HTML += "<option value='full'";    HTML += SelectedAttr(pConfig->ControlEncoderType == CConfig::TEncoderType::Full);    HTML += ">full</option>";
-		HTML += "</select></label>";
-		HTML += "<label>Encoder reversed<small>on: reverses encoder direction if CLK/DAT are connected backwards.</small><select name='encoder_reversed'><option value='off'"; HTML += SelectedAttr(!pConfig->ControlEncoderReversed); HTML += ">off</option><option value='on'"; HTML += SelectedAttr(pConfig->ControlEncoderReversed); HTML += ">on</option></select></label>";
-		HTML += "<label>MiSTer<small>on: enables I2C interface to control mt32-pi from the MiSTer FPGA OSD via additional hardware.</small><select name='control_mister'><option value='off'"; HTML += SelectedAttr(!pConfig->ControlMister); HTML += ">off</option><option value='on'"; HTML += SelectedAttr(pConfig->ControlMister); HTML += ">on</option></select></label>";
-		HTML += "<label>Switch timeout (s)<small>Seconds to wait before loading the SoundFont when switching with the physical button. Range: 0-3600</small><input name='control_switch_timeout' type='number' value='"; AppendEscaped(HTML, CtrlSwitchTO); HTML += "'></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>Control</h2><div class='grid'>");
+		html.Append("<label>Control scheme<small>none: no physical controls; simple_buttons: 4-button scheme; simple_encoder: 2 buttons + rotary encoder</small><select name='control_scheme'>");
+		html.Append("<option value='none'"); html.Append(SelectedAttr(pConfig->ControlScheme == CConfig::TControlScheme::None)); html.Append(">none</option>");
+		html.Append("<option value='simple_buttons'"); html.Append(SelectedAttr(pConfig->ControlScheme == CConfig::TControlScheme::SimpleButtons)); html.Append(">simple_buttons</option>");
+		html.Append("<option value='simple_encoder'"); html.Append(SelectedAttr(pConfig->ControlScheme == CConfig::TControlScheme::SimpleEncoder)); html.Append(">simple_encoder</option>");
+		html.Append("</select></label>");
+		html.Append("<label>Encoder type<small>Gray-code cycle per click. quarter: 4 clicks = 1 step; half: 2 clicks; full: 1 click = 1 step. Depends on your encoder hardware.</small><select name='encoder_type'>");
+		html.Append("<option value='quarter'"); html.Append(SelectedAttr(pConfig->ControlEncoderType == CConfig::TEncoderType::Quarter)); html.Append(">quarter</option>");
+		html.Append("<option value='half'");    html.Append(SelectedAttr(pConfig->ControlEncoderType == CConfig::TEncoderType::Half));    html.Append(">half</option>");
+		html.Append("<option value='full'");    html.Append(SelectedAttr(pConfig->ControlEncoderType == CConfig::TEncoderType::Full));    html.Append(">full</option>");
+		html.Append("</select></label>");
+		html.Append("<label>Encoder reversed<small>on: reverses encoder direction if CLK/DAT are connected backwards.</small><select name='encoder_reversed'><option value='off'"); html.Append(SelectedAttr(!pConfig->ControlEncoderReversed)); html.Append(">off</option><option value='on'"); html.Append(SelectedAttr(pConfig->ControlEncoderReversed)); html.Append(">on</option></select></label>");
+		html.Append("<label>MiSTer<small>on: enables I2C interface to control mt32-pi from the MiSTer FPGA OSD via additional hardware.</small><select name='control_mister'><option value='off'"); html.Append(SelectedAttr(!pConfig->ControlMister)); html.Append(">off</option><option value='on'"); html.Append(SelectedAttr(pConfig->ControlMister)); html.Append(">on</option></select></label>");
+		html.Append("<label>Switch timeout (s)<small>Seconds to wait before loading the SoundFont when switching with the physical button. Range: 0-3600</small><input name='control_switch_timeout' type='number' value='"); AppendEscaped(html, CtrlSwitchTO); html.Append("'></label>");
+		html.Append("</div></section>");
 
 		// ---- [mt32emu] ----
 		CString MT32Gain; MT32Gain.Format("%.2f", pConfig->MT32EmuGain);
 		CString MT32RevGain; MT32RevGain.Format("%.2f", pConfig->MT32EmuReverbGain);
-		HTML += "<section><h2>MT-32 emulator (defaults)</h2><div class='grid'>";
-		HTML += "<label>Gain<small>Synthesizer output gain. 1.0 = no change. Independent of MIDI volume. Range: 0.0-256.0</small><input name='mt32emu_gain' type='number' step='0.01' min='0' max='8' value='"; AppendEscaped(HTML, MT32Gain); HTML += "'></label>";
-		HTML += "<label>Reverb gain<small>Gain applied only to the MT-32 wet reverb channel. Range: 0.0 and upwards.</small><input name='mt32emu_reverb_gain' type='number' step='0.01' min='0' max='8' value='"; AppendEscaped(HTML, MT32RevGain); HTML += "'></label>";
-		HTML += "<label>Resampler quality<small>none: no resampling (requires sample_rate=32000); fastest/fast: quick; good: balanced; best: highest quality, most CPU</small><select name='mt32emu_resampler_quality'>";
-		HTML += "<option value='none'";    HTML += SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::None);    HTML += ">none</option>";
-		HTML += "<option value='fastest'"; HTML += SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::Fastest); HTML += ">fastest</option>";
-		HTML += "<option value='fast'";    HTML += SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::Fast);    HTML += ">fast</option>";
-		HTML += "<option value='good'";    HTML += SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::Good);    HTML += ">good</option>";
-		HTML += "<option value='best'";    HTML += SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::Best);    HTML += ">best</option>";
-		HTML += "</select></label>";
-		HTML += "<label>MIDI channels<small>standard: parts 1-8 on MIDI channels 2-9, rhythm=10; alternate: parts 1-8 on channels 1-8, rhythm=10</small><select name='mt32emu_midi_channels'>";
-		HTML += "<option value='standard'";  HTML += SelectedAttr(pConfig->MT32EmuMIDIChannels == CConfig::TMT32EmuMIDIChannels::Standard);  HTML += ">standard</option>";
-		HTML += "<option value='alternate'"; HTML += SelectedAttr(pConfig->MT32EmuMIDIChannels == CConfig::TMT32EmuMIDIChannels::Alternate); HTML += ">alternate</option>";
-		HTML += "</select></label>";
-		HTML += "<label>ROM set<small>Boot ROM set. old: MT-32 v1; new: MT-32 v2; cm32l: Roland CM-32L; any: first available; all: all found</small><select name='mt32emu_rom_set'>";
-		HTML += "<option value='old'";   HTML += SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::MT32Old); HTML += ">old (MT-32)</option>";
-		HTML += "<option value='new'";   HTML += SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::MT32New); HTML += ">new (MT-32)</option>";
-		HTML += "<option value='cm32l'"; HTML += SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::CM32L);  HTML += ">cm32l</option>";
-		HTML += "<option value='any'";   HTML += SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::Any);    HTML += ">any</option>";
-		HTML += "<option value='all'";   HTML += SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::All);    HTML += ">all</option>";
-		HTML += "</select></label>";
-		HTML += "<label>Reversed stereo<small>on: swaps L/R so MT-32 panning matches SoundFont. Also changeable at runtime via SysEx.</small><select name='mt32emu_reversed_stereo'><option value='off'"; HTML += SelectedAttr(!pConfig->MT32EmuReversedStereo); HTML += ">off</option><option value='on'"; HTML += SelectedAttr(pConfig->MT32EmuReversedStereo); HTML += ">on</option></select></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>MT-32 emulator (defaults)</h2><div class='grid'>");
+		html.Append("<label>Gain<small>Synthesizer output gain. 1.0 = no change. Independent of MIDI volume. Range: 0.0-256.0</small><input name='mt32emu_gain' type='number' step='0.01' min='0' max='8' value='"); AppendEscaped(html, MT32Gain); html.Append("'></label>");
+		html.Append("<label>Reverb gain<small>Gain applied only to the MT-32 wet reverb channel. Range: 0.0 and upwards.</small><input name='mt32emu_reverb_gain' type='number' step='0.01' min='0' max='8' value='"); AppendEscaped(html, MT32RevGain); html.Append("'></label>");
+		html.Append("<label>Resampler quality<small>none: no resampling (requires sample_rate=32000); fastest/fast: quick; good: balanced; best: highest quality, most CPU</small><select name='mt32emu_resampler_quality'>");
+		html.Append("<option value='none'");    html.Append(SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::None));    html.Append(">none</option>");
+		html.Append("<option value='fastest'"); html.Append(SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::Fastest)); html.Append(">fastest</option>");
+		html.Append("<option value='fast'");    html.Append(SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::Fast));    html.Append(">fast</option>");
+		html.Append("<option value='good'");    html.Append(SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::Good));    html.Append(">good</option>");
+		html.Append("<option value='best'");    html.Append(SelectedAttr(pConfig->MT32EmuResamplerQuality == CConfig::TMT32EmuResamplerQuality::Best));    html.Append(">best</option>");
+		html.Append("</select></label>");
+		html.Append("<label>MIDI channels<small>standard: parts 1-8 on MIDI channels 2-9, rhythm=10; alternate: parts 1-8 on channels 1-8, rhythm=10</small><select name='mt32emu_midi_channels'>");
+		html.Append("<option value='standard'");  html.Append(SelectedAttr(pConfig->MT32EmuMIDIChannels == CConfig::TMT32EmuMIDIChannels::Standard));  html.Append(">standard</option>");
+		html.Append("<option value='alternate'"); html.Append(SelectedAttr(pConfig->MT32EmuMIDIChannels == CConfig::TMT32EmuMIDIChannels::Alternate)); html.Append(">alternate</option>");
+		html.Append("</select></label>");
+		html.Append("<label>ROM set<small>Boot ROM set. old: MT-32 v1; new: MT-32 v2; cm32l: Roland CM-32L; any: first available; all: all found</small><select name='mt32emu_rom_set'>");
+		html.Append("<option value='old'");   html.Append(SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::MT32Old)); html.Append(">old (MT-32)</option>");
+		html.Append("<option value='new'");   html.Append(SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::MT32New)); html.Append(">new (MT-32)</option>");
+		html.Append("<option value='cm32l'"); html.Append(SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::CM32L));  html.Append(">cm32l</option>");
+		html.Append("<option value='any'");   html.Append(SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::Any));    html.Append(">any</option>");
+		html.Append("<option value='all'");   html.Append(SelectedAttr(pConfig->MT32EmuROMSet == CConfig::TMT32EmuROMSet::All));    html.Append(">all</option>");
+		html.Append("</select></label>");
+		html.Append("<label>Reversed stereo<small>on: swaps L/R so MT-32 panning matches SoundFont. Also changeable at runtime via SysEx.</small><select name='mt32emu_reversed_stereo'><option value='off'"); html.Append(SelectedAttr(!pConfig->MT32EmuReversedStereo)); html.Append(">off</option><option value='on'"); html.Append(SelectedAttr(pConfig->MT32EmuReversedStereo)); html.Append(">on</option></select></label>");
+		html.Append("</div></section>");
 
 		// ---- [fluidsynth] ----
 		CString FSSoundFont; FSSoundFont.Format("%d", pConfig->FluidSynthSoundFont);
@@ -3564,46 +3589,46 @@ THTTPStatus CWebDaemon::BuildConfigPage(u8* pBuffer, unsigned* pLength, const ch
 		CString FSChrLevel;  FSChrLevel.Format("%.2f", pConfig->FluidSynthDefaultChorusLevel);
 		CString FSChrVoices; FSChrVoices.Format("%d", pConfig->FluidSynthDefaultChorusVoices);
 		CString FSChrSpeed;  FSChrSpeed.Format("%.2f", pConfig->FluidSynthDefaultChorusSpeed);
-		HTML += "<section><h2>SoundFont (defaults)</h2><div class='grid'>";
-		HTML += "<label>SoundFont index<small>0-based index sorted alphabetically from soundfonts/. 0=first, 1=second, etc.</small><input name='fs_soundfont' type='number' min='0' value='"; AppendEscaped(HTML, FSSoundFont); HTML += "'></label>";
-		HTML += "<label>Polyphony<small>Max simultaneous voices. Reduce if distortion occurs. Pi4/overclocked can support higher values. Range: 1-65535</small><input name='fs_polyphony' type='number' min='1' value='"; AppendEscaped(HTML, FSPolyphony); HTML += "'></label>";
-		HTML += "<label>Gain<small>FluidSynth master volume gain. See fluidsettings.xml for details.</small><input name='fs_gain' type='number' step='0.01' min='0' value='"; AppendEscaped(HTML, FSGain); HTML += "'></label>";
-		HTML += "<label>Reverb<small>on: enable reverb by default. Can be overridden per SoundFont with a .cfg file next to the .sf2</small><select name='fs_reverb'><option value='on'"; HTML += SelectedAttr(pConfig->FluidSynthDefaultReverbActive); HTML += ">on</option><option value='off'"; HTML += SelectedAttr(!pConfig->FluidSynthDefaultReverbActive); HTML += ">off</option></select></label>";
-		HTML += "<label>Reverb damping<small>High-frequency absorption. Range: 0.0-1.0</small><input name='fs_reverb_damping' type='number' step='0.01' min='0' max='1' value='"; AppendEscaped(HTML, FSRevDamp); HTML += "'></label>";
-		HTML += "<label>Reverb level<small>Wet mix level. Range: 0.0-1.0</small><input name='fs_reverb_level' type='number' step='0.01' min='0' value='"; AppendEscaped(HTML, FSRevLevel); HTML += "'></label>";
-		HTML += "<label>Reverb room size<small>Room size. Higher values = more cavernous. Range: 0.0-1.0</small><input name='fs_reverb_room_size' type='number' step='0.01' min='0' max='1' value='"; AppendEscaped(HTML, FSRevRoom); HTML += "'></label>";
-		HTML += "<label>Reverb width<small>Stereo width. 0.0 = mono, 100.0 = maximum. Range: 0.0-100.0</small><input name='fs_reverb_width' type='number' step='0.01' min='0' value='"; AppendEscaped(HTML, FSRevWidth); HTML += "'></label>";
-		HTML += "<label>Chorus<small>on: enable chorus by default. Can be overridden per SoundFont with a .cfg file next to the .sf2</small><select name='fs_chorus'><option value='on'"; HTML += SelectedAttr(pConfig->FluidSynthDefaultChorusActive); HTML += ">on</option><option value='off'"; HTML += SelectedAttr(!pConfig->FluidSynthDefaultChorusActive); HTML += ">off</option></select></label>";
-		HTML += "<label>Chorus depth<small>Modulation depth (ms). Typical values: 0-20</small><input name='fs_chorus_depth' type='number' step='0.01' min='0' value='"; AppendEscaped(HTML, FSChrDepth); HTML += "'></label>";
-		HTML += "<label>Chorus level<small>Mix level. Typical values: 0.0-10.0</small><input name='fs_chorus_level' type='number' step='0.01' min='0' value='"; AppendEscaped(HTML, FSChrLevel); HTML += "'></label>";
-		HTML += "<label>Chorus voices<small>Number of modulator voices. Typical values: 1-99</small><input name='fs_chorus_voices' type='number' min='0' value='"; AppendEscaped(HTML, FSChrVoices); HTML += "'></label>";
-		HTML += "<label>Chorus speed<small>Modulation speed in Hz. Range: 0.29-5.0</small><input name='fs_chorus_speed' type='number' step='0.01' min='0' value='"; AppendEscaped(HTML, FSChrSpeed); HTML += "'></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>SoundFont (defaults)</h2><div class='grid'>");
+		html.Append("<label>SoundFont index<small>0-based index sorted alphabetically from soundfonts/. 0=first, 1=second, etc.</small><input name='fs_soundfont' type='number' min='0' value='"); AppendEscaped(html, FSSoundFont); html.Append("'></label>");
+		html.Append("<label>Polyphony<small>Max simultaneous voices. Reduce if distortion occurs. Pi4/overclocked can support higher values. Range: 1-65535</small><input name='fs_polyphony' type='number' min='1' value='"); AppendEscaped(html, FSPolyphony); html.Append("'></label>");
+		html.Append("<label>Gain<small>FluidSynth master volume gain. See fluidsettings.xml for details.</small><input name='fs_gain' type='number' step='0.01' min='0' value='"); AppendEscaped(html, FSGain); html.Append("'></label>");
+		html.Append("<label>Reverb<small>on: enable reverb by default. Can be overridden per SoundFont with a .cfg file next to the .sf2</small><select name='fs_reverb'><option value='on'"); html.Append(SelectedAttr(pConfig->FluidSynthDefaultReverbActive)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->FluidSynthDefaultReverbActive)); html.Append(">off</option></select></label>");
+		html.Append("<label>Reverb damping<small>High-frequency absorption. Range: 0.0-1.0</small><input name='fs_reverb_damping' type='number' step='0.01' min='0' max='1' value='"); AppendEscaped(html, FSRevDamp); html.Append("'></label>");
+		html.Append("<label>Reverb level<small>Wet mix level. Range: 0.0-1.0</small><input name='fs_reverb_level' type='number' step='0.01' min='0' value='"); AppendEscaped(html, FSRevLevel); html.Append("'></label>");
+		html.Append("<label>Reverb room size<small>Room size. Higher values = more cavernous. Range: 0.0-1.0</small><input name='fs_reverb_room_size' type='number' step='0.01' min='0' max='1' value='"); AppendEscaped(html, FSRevRoom); html.Append("'></label>");
+		html.Append("<label>Reverb width<small>Stereo width. 0.0 = mono, 100.0 = maximum. Range: 0.0-100.0</small><input name='fs_reverb_width' type='number' step='0.01' min='0' value='"); AppendEscaped(html, FSRevWidth); html.Append("'></label>");
+		html.Append("<label>Chorus<small>on: enable chorus by default. Can be overridden per SoundFont with a .cfg file next to the .sf2</small><select name='fs_chorus'><option value='on'"); html.Append(SelectedAttr(pConfig->FluidSynthDefaultChorusActive)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->FluidSynthDefaultChorusActive)); html.Append(">off</option></select></label>");
+		html.Append("<label>Chorus depth<small>Modulation depth (ms). Typical values: 0-20</small><input name='fs_chorus_depth' type='number' step='0.01' min='0' value='"); AppendEscaped(html, FSChrDepth); html.Append("'></label>");
+		html.Append("<label>Chorus level<small>Mix level. Typical values: 0.0-10.0</small><input name='fs_chorus_level' type='number' step='0.01' min='0' value='"); AppendEscaped(html, FSChrLevel); html.Append("'></label>");
+		html.Append("<label>Chorus voices<small>Number of modulator voices. Typical values: 1-99</small><input name='fs_chorus_voices' type='number' min='0' value='"); AppendEscaped(html, FSChrVoices); html.Append("'></label>");
+		html.Append("<label>Chorus speed<small>Modulation speed in Hz. Range: 0.29-5.0</small><input name='fs_chorus_speed' type='number' step='0.01' min='0' value='"); AppendEscaped(html, FSChrSpeed); html.Append("'></label>");
+		html.Append("</div></section>");
 
 		// ---- [lcd] ----
 		CString LCDWidth; LCDWidth.Format("%d", pConfig->LCDWidth);
 		CString LCDHeight; LCDHeight.Format("%d", pConfig->LCDHeight);
 		CString I2CAddr; I2CAddr.Format("%x", pConfig->LCDI2CLCDAddress);
-		HTML += "<section><h2>LCD / OLED display</h2><div class='grid'>";
-		HTML += "<label>LCD type<small>none: no LCD; hd44780_4bit: 4-bit GPIO char LCD; hd44780_i2c: I2C char LCD; sh1106_i2c: 1.3 inch OLED; ssd1306_i2c: 0.96 inch OLED</small><select name='lcd_type'>";
-		HTML += "<option value='none'";        HTML += SelectedAttr(pConfig->LCDType == CConfig::TLCDType::None);          HTML += ">none</option>";
-		HTML += "<option value='hd44780_4bit'"; HTML += SelectedAttr(pConfig->LCDType == CConfig::TLCDType::HD44780FourBit); HTML += ">hd44780_4bit</option>";
-		HTML += "<option value='hd44780_i2c'"; HTML += SelectedAttr(pConfig->LCDType == CConfig::TLCDType::HD44780I2C);    HTML += ">hd44780_i2c</option>";
-		HTML += "<option value='sh1106_i2c'";  HTML += SelectedAttr(pConfig->LCDType == CConfig::TLCDType::SH1106I2C);     HTML += ">sh1106_i2c</option>";
-		HTML += "<option value='ssd1306_i2c'"; HTML += SelectedAttr(pConfig->LCDType == CConfig::TLCDType::SSD1306I2C);    HTML += ">ssd1306_i2c</option>";
-		HTML += "</select></label>";
-		HTML += "<label>LCD width<small>Width in characters (LCD) or pixels (OLED). SSD1305: use 132. Range: 20-132</small><input name='lcd_width' type='number' value='"; AppendEscaped(HTML, LCDWidth); HTML += "'></label>";
-		HTML += "<label>LCD height<small>Height in characters (LCD) or pixels (OLED). See docs for your model. Range: 2-64</small><input name='lcd_height' type='number' value='"; AppendEscaped(HTML, LCDHeight); HTML += "'></label>";
-		HTML += "<label>LCD I2C address (hex)<small>Hex address without 0x prefix. Most common: 3c or 3d. Check your display datasheet.</small><input name='lcd_i2c_address' value='"; AppendEscaped(HTML, I2CAddr); HTML += "'></label>";
-		HTML += "<label>Rotation<small>normal: no rotation; inverted: 180 degree rotation. Graphic LCDs only (sh1106, ssd1306).</small><select name='lcd_rotation'>";
-		HTML += "<option value='normal'";   HTML += SelectedAttr(pConfig->LCDRotation == CConfig::TLCDRotation::Normal);   HTML += ">normal</option>";
-		HTML += "<option value='inverted'"; HTML += SelectedAttr(pConfig->LCDRotation == CConfig::TLCDRotation::Inverted); HTML += ">inverted</option>";
-		HTML += "</select></label>";
-		HTML += "<label>Mirror<small>normal: no mirror; mirrored: horizontal reflection. Graphic LCDs only (sh1106, ssd1306).</small><select name='lcd_mirror'>";
-		HTML += "<option value='normal'";   HTML += SelectedAttr(pConfig->LCDMirror == CConfig::TLCDMirror::Normal);   HTML += ">normal</option>";
-		HTML += "<option value='mirrored'"; HTML += SelectedAttr(pConfig->LCDMirror == CConfig::TLCDMirror::Mirrored); HTML += ">mirrored</option>";
-		HTML += "</select></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>LCD / OLED display</h2><div class='grid'>");
+		html.Append("<label>LCD type<small>none: no LCD; hd44780_4bit: 4-bit GPIO char LCD; hd44780_i2c: I2C char LCD; sh1106_i2c: 1.3 inch OLED; ssd1306_i2c: 0.96 inch OLED</small><select name='lcd_type'>");
+		html.Append("<option value='none'");        html.Append(SelectedAttr(pConfig->LCDType == CConfig::TLCDType::None));          html.Append(">none</option>");
+		html.Append("<option value='hd44780_4bit'"); html.Append(SelectedAttr(pConfig->LCDType == CConfig::TLCDType::HD44780FourBit)); html.Append(">hd44780_4bit</option>");
+		html.Append("<option value='hd44780_i2c'"); html.Append(SelectedAttr(pConfig->LCDType == CConfig::TLCDType::HD44780I2C));    html.Append(">hd44780_i2c</option>");
+		html.Append("<option value='sh1106_i2c'");  html.Append(SelectedAttr(pConfig->LCDType == CConfig::TLCDType::SH1106I2C));     html.Append(">sh1106_i2c</option>");
+		html.Append("<option value='ssd1306_i2c'"); html.Append(SelectedAttr(pConfig->LCDType == CConfig::TLCDType::SSD1306I2C));    html.Append(">ssd1306_i2c</option>");
+		html.Append("</select></label>");
+		html.Append("<label>LCD width<small>Width in characters (LCD) or pixels (OLED). SSD1305: use 132. Range: 20-132</small><input name='lcd_width' type='number' value='"); AppendEscaped(html, LCDWidth); html.Append("'></label>");
+		html.Append("<label>LCD height<small>Height in characters (LCD) or pixels (OLED). See docs for your model. Range: 2-64</small><input name='lcd_height' type='number' value='"); AppendEscaped(html, LCDHeight); html.Append("'></label>");
+		html.Append("<label>LCD I2C address (hex)<small>Hex address without 0x prefix. Most common: 3c or 3d. Check your display datasheet.</small><input name='lcd_i2c_address' value='"); AppendEscaped(html, I2CAddr); html.Append("'></label>");
+		html.Append("<label>Rotation<small>normal: no rotation; inverted: 180 degree rotation. Graphic LCDs only (sh1106, ssd1306).</small><select name='lcd_rotation'>");
+		html.Append("<option value='normal'");   html.Append(SelectedAttr(pConfig->LCDRotation == CConfig::TLCDRotation::Normal));   html.Append(">normal</option>");
+		html.Append("<option value='inverted'"); html.Append(SelectedAttr(pConfig->LCDRotation == CConfig::TLCDRotation::Inverted)); html.Append(">inverted</option>");
+		html.Append("</select></label>");
+		html.Append("<label>Mirror<small>normal: no mirror; mirrored: horizontal reflection. Graphic LCDs only (sh1106, ssd1306).</small><select name='lcd_mirror'>");
+		html.Append("<option value='normal'");   html.Append(SelectedAttr(pConfig->LCDMirror == CConfig::TLCDMirror::Normal));   html.Append(">normal</option>");
+		html.Append("<option value='mirrored'"); html.Append(SelectedAttr(pConfig->LCDMirror == CConfig::TLCDMirror::Mirrored)); html.Append(">mirrored</option>");
+		html.Append("</select></label>");
+		html.Append("</div></section>");
 
 		// ---- [network] ----
 		CString WebPort; WebPort.Format("%d", pConfig->NetworkWebServerPort);
@@ -3611,55 +3636,52 @@ THTTPStatus CWebDaemon::BuildConfigPage(u8* pBuffer, unsigned* pLength, const ch
 		CString Subnet; pConfig->NetworkSubnetMask.Format(&Subnet);
 		CString GW; pConfig->NetworkDefaultGateway.Format(&GW);
 		CString DNS; pConfig->NetworkDNSServer.Format(&DNS);
-		HTML += "<section><h2>Network</h2><div class='grid'>";
-		HTML += "<label>Mode<small>off: no network; ethernet: Ethernet (Pi 3B/3B+ requires USB); wifi: Wi-Fi (configure SSID in WiFi section below)</small><select name='network_mode'><option value='off'"; HTML += SelectedAttr(pConfig->NetworkMode == CConfig::TNetworkMode::Off); HTML += ">off</option>";
-		HTML += "<option value='ethernet'"; HTML += SelectedAttr(pConfig->NetworkMode == CConfig::TNetworkMode::Ethernet); HTML += ">ethernet</option>";
-		HTML += "<option value='wifi'";     HTML += SelectedAttr(pConfig->NetworkMode == CConfig::TNetworkMode::WiFi);     HTML += ">wifi</option></select></label>";
-		HTML += "<label>DHCP<small>on: automatic IP via DHCP; off: use static IP, subnet, gateway and DNS values below.</small><select name='network_dhcp'><option value='on'"; HTML += SelectedAttr(pConfig->NetworkDHCP); HTML += ">on</option><option value='off'"; HTML += SelectedAttr(!pConfig->NetworkDHCP); HTML += ">off</option></select></label>";
-		HTML += "<label>IP address<input name='network_ip' value='"; AppendEscaped(HTML, IP); HTML += "'></label>";
-		HTML += "<label>Subnet mask<input name='network_subnet' value='"; AppendEscaped(HTML, Subnet); HTML += "'></label>";
-		HTML += "<label>Default gateway<input name='network_gateway' value='"; AppendEscaped(HTML, GW); HTML += "'></label>";
-		HTML += "<label>DNS server<input name='network_dns' value='"; AppendEscaped(HTML, DNS); HTML += "'></label>";
-		HTML += "<label>Hostname<input name='network_hostname' value='"; AppendEscaped(HTML, pConfig->NetworkHostname); HTML += "'></label>";
-		HTML += "<label>RTP MIDI<small>on: enable RTP-MIDI/AppleMIDI server (macOS, rtpMIDI on Windows).</small><select name='network_rtp_midi'><option value='on'"; HTML += SelectedAttr(pConfig->NetworkRTPMIDI); HTML += ">on</option><option value='off'"; HTML += SelectedAttr(!pConfig->NetworkRTPMIDI); HTML += ">off</option></select></label>";
-		HTML += "<label>UDP MIDI<small>on: enable simple UDP MIDI server on port 1999.</small><select name='network_udp_midi'><option value='on'"; HTML += SelectedAttr(pConfig->NetworkUDPMIDI); HTML += ">on</option><option value='off'"; HTML += SelectedAttr(!pConfig->NetworkUDPMIDI); HTML += ">off</option></select></label>";
-		HTML += "<label>FTP<small>on: enable FTP server to transfer files (ROMs, SoundFonts) over the network.</small><select name='network_ftp'><option value='on'"; HTML += SelectedAttr(pConfig->NetworkFTPServer); HTML += ">on</option><option value='off'"; HTML += SelectedAttr(!pConfig->NetworkFTPServer); HTML += ">off</option></select></label>";
-		HTML += "<label>FTP username<small>FTP server username. Default: mt32-pi</small><input name='network_ftp_username' value='"; AppendEscaped(HTML, pConfig->NetworkFTPUsername); HTML += "'></label>";
-		HTML += "<label>FTP password<small>FTP server password. Default: mt32-pi</small><input name='network_ftp_password' type='password' value='"; AppendEscaped(HTML, pConfig->NetworkFTPPassword); HTML += "'></label>";
-		HTML += "<label>Web<select name='network_web'><option value='on'"; HTML += SelectedAttr(pConfig->NetworkWebServer); HTML += ">on</option><option value='off'"; HTML += SelectedAttr(!pConfig->NetworkWebServer); HTML += ">off</option></select></label>";
-		HTML += "<label>Web port<small>TCP port for the web server. Default: 80. Restart to apply changes.</small><input name='network_web_port' type='number' value='"; AppendEscaped(HTML, WebPort); HTML += "'></label>";
-		HTML += "</div></section>";
+		html.Append("<section><h2>Network</h2><div class='grid'>");
+		html.Append("<label>Mode<small>off: no network; ethernet: Ethernet (Pi 3B/3B+ requires USB); wifi: Wi-Fi (configure SSID in WiFi section below)</small><select name='network_mode'><option value='off'"); html.Append(SelectedAttr(pConfig->NetworkMode == CConfig::TNetworkMode::Off)); html.Append(">off</option>");
+		html.Append("<option value='ethernet'"); html.Append(SelectedAttr(pConfig->NetworkMode == CConfig::TNetworkMode::Ethernet)); html.Append(">ethernet</option>");
+		html.Append("<option value='wifi'");     html.Append(SelectedAttr(pConfig->NetworkMode == CConfig::TNetworkMode::WiFi));     html.Append(">wifi</option></select></label>");
+		html.Append("<label>DHCP<small>on: automatic IP via DHCP; off: use static IP, subnet, gateway and DNS values below.</small><select name='network_dhcp'><option value='on'"); html.Append(SelectedAttr(pConfig->NetworkDHCP)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->NetworkDHCP)); html.Append(">off</option></select></label>");
+		html.Append("<label>IP address<input name='network_ip' value='"); AppendEscaped(html, IP); html.Append("'></label>");
+		html.Append("<label>Subnet mask<input name='network_subnet' value='"); AppendEscaped(html, Subnet); html.Append("'></label>");
+		html.Append("<label>Default gateway<input name='network_gateway' value='"); AppendEscaped(html, GW); html.Append("'></label>");
+		html.Append("<label>DNS server<input name='network_dns' value='"); AppendEscaped(html, DNS); html.Append("'></label>");
+		html.Append("<label>Hostname<input name='network_hostname' value='"); AppendEscaped(html, pConfig->NetworkHostname); html.Append("'></label>");
+		html.Append("<label>RTP MIDI<small>on: enable RTP-MIDI/AppleMIDI server (macOS, rtpMIDI on Windows).</small><select name='network_rtp_midi'><option value='on'"); html.Append(SelectedAttr(pConfig->NetworkRTPMIDI)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->NetworkRTPMIDI)); html.Append(">off</option></select></label>");
+		html.Append("<label>UDP MIDI<small>on: enable simple UDP MIDI server on port 1999.</small><select name='network_udp_midi'><option value='on'"); html.Append(SelectedAttr(pConfig->NetworkUDPMIDI)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->NetworkUDPMIDI)); html.Append(">off</option></select></label>");
+		html.Append("<label>FTP<small>on: enable FTP server to transfer files (ROMs, SoundFonts) over the network.</small><select name='network_ftp'><option value='on'"); html.Append(SelectedAttr(pConfig->NetworkFTPServer)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->NetworkFTPServer)); html.Append(">off</option></select></label>");
+		html.Append("<label>FTP username<small>FTP server username. Default: mt32-pi</small><input name='network_ftp_username' value='"); AppendEscaped(html, pConfig->NetworkFTPUsername); html.Append("'></label>");
+		html.Append("<label>FTP password<small>FTP server password. Default: mt32-pi</small><input name='network_ftp_password' type='password' value='"); AppendEscaped(html, pConfig->NetworkFTPPassword); html.Append("'></label>");
+		html.Append("<label>Web<select name='network_web'><option value='on'"); html.Append(SelectedAttr(pConfig->NetworkWebServer)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->NetworkWebServer)); html.Append(">off</option></select></label>");
+		html.Append("<label>Web port<small>TCP port for the web server. Default: 80. Restart to apply changes.</small><input name='network_web_port' type='number' value='"); AppendEscaped(html, WebPort); html.Append("'></label>");
+		html.Append("</div></section>");
 
-		HTML += "<section id='wifi-section' class='section-hidden'><h2>WiFi</h2><p>Credentials for connecting to a wireless network. Saved to <code>wpa_supplicant.conf</code>.</p>";
-		HTML += "<div class='grid'>";
-		HTML += "<label>Country (ISO 3166-1 alpha-2)<input id='wifi_country' maxlength='2' placeholder='ES' autocomplete='off'></label>";
-		HTML += "<label>SSID<input id='wifi_ssid' autocomplete='off'></label>";
-		HTML += "<label>Password (PSK)<input id='wifi_psk' type='password' autocomplete='new-password' placeholder='leave empty to keep current'></label>";
-		HTML += "</div><div style='margin-top:12px;'>";
-		HTML += "<button class='primary' type='button' onclick='saveWifi()'>Save WiFi</button> ";
-		HTML += "<span id='wifi_status' style='color:#93c5fd;'></span></div></section>";
+		html.Append("<section id='wifi-section' class='section-hidden'><h2>WiFi</h2><p>Credentials for connecting to a wireless network. Saved to <code>wpa_supplicant.conf</code>.</p>");
+		html.Append("<div class='grid'>");
+		html.Append("<label>Country (ISO 3166-1 alpha-2)<input id='wifi_country' maxlength='2' placeholder='ES' autocomplete='off'></label>");
+		html.Append("<label>SSID<input id='wifi_ssid' autocomplete='off'></label>");
+		html.Append("<label>Password (PSK)<input id='wifi_psk' type='password' autocomplete='new-password' placeholder='leave empty to keep current'></label>");
+		html.Append("</div><div style='margin-top:12px;'>");
+		html.Append("<button class='primary' type='button' onclick='saveWifi()'>Save WiFi</button> ");
+		html.Append("<span id='wifi_status' style='color:#93c5fd;'></span></div></section>");
 
-		HTML += "<button class='primary' type='submit'>Save config</button> <button class='warn' type='button' id='rebootBtn'>Restart Pi</button> <span id='status'></span>";
-		HTML += "</form>";
-		HTML += "<script>const f=document.getElementById('cfgForm');const s=document.getElementById('status');const rb=document.getElementById('rebootBtn');";
-		HTML += "f.addEventListener('submit',async(e)=>{e.preventDefault();s.textContent='Saving...';const body=new URLSearchParams(new FormData(f));try{const r=await fetch('/api/config/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();s.textContent=j.message||'OK';}catch(err){s.textContent='Error saving config';}});";
-		HTML += "rb.addEventListener('click',async()=>{if(!confirm('Restart mt32-pi now?'))return;s.textContent='Restarting\u2026';rb.disabled=true;try{await fetch('/api/system/reboot',{method:'POST'});}catch(e){}s.textContent='Restarting\u2026 reconnect in ~20s';});";
-		HTML += "const mEl=document.querySelector('select[name=\"network_mode\"]');const wSec=document.getElementById('wifi-section');";
-		HTML += "function _chkWifi(){if(wSec)wSec.classList.toggle('section-hidden',!mEl||mEl.value!=='wifi');}";
-		HTML += "if(mEl)mEl.addEventListener('change',_chkWifi);_chkWifi();";
-		HTML += "fetch('/api/wifi/read').then(r=>r.json()).then(j=>{const ss=document.getElementById('wifi_ssid');const co=document.getElementById('wifi_country');if(ss)ss.value=j.ssid||'';if(co)co.value=j.country||'';}).catch(()=>{});";
-		HTML += "function saveWifi(){const ws=document.getElementById('wifi_status');const ss=document.getElementById('wifi_ssid');const co=document.getElementById('wifi_country');const pk=document.getElementById('wifi_psk');";
-		HTML += "if(!ss||!ss.value.trim()){if(ws)ws.textContent='SSID required';return;}if(!co||!co.value.trim()){if(ws)ws.textContent='Country required';return;}";
-		HTML += "if(ws)ws.textContent='Saving...';const body=new URLSearchParams({wifi_ssid:ss.value,wifi_psk:pk?pk.value:'',wifi_country:co.value});";
-		HTML += "fetch('/api/wifi/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()}).then(r=>r.json()).then(j=>{if(ws)ws.textContent=j.ok?'Saved. Restart to apply.':(j.message||'Error');}).catch(()=>{if(ws)ws.textContent='Error saving WiFi';});}</script>";
-		HTML += "</main></body></html>";
+		html.Append("<button class='primary' type='submit'>Save config</button> <button class='warn' type='button' id='rebootBtn'>Restart Pi</button> <span id='status'></span>");
+		html.Append("</form>");
+		html.Append("<script>const f=document.getElementById('cfgForm');const s=document.getElementById('status');const rb=document.getElementById('rebootBtn');");
+		html.Append("f.addEventListener('submit',async(e)=>{e.preventDefault();s.textContent='Saving...';const body=new URLSearchParams(new FormData(f));try{const r=await fetch('/api/config/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();s.textContent=j.message||'OK';}catch(err){s.textContent='Error saving config';}});");
+		html.Append("rb.addEventListener('click',async()=>{if(!confirm('Restart mt32-pi now?'))return;s.textContent='Restarting\u2026';rb.disabled=true;try{await fetch('/api/system/reboot',{method:'POST'});}catch(e){}s.textContent='Restarting\u2026 reconnect in ~20s';});");
+		html.Append("const mEl=document.querySelector('select[name=\"network_mode\"]');const wSec=document.getElementById('wifi-section');");
+		html.Append("function _chkWifi(){if(wSec)wSec.classList.toggle('section-hidden',!mEl||mEl.value!=='wifi');}");
+		html.Append("if(mEl)mEl.addEventListener('change',_chkWifi);_chkWifi();");
+		html.Append("fetch('/api/wifi/read').then(r=>r.json()).then(j=>{const ss=document.getElementById('wifi_ssid');const co=document.getElementById('wifi_country');if(ss)ss.value=j.ssid||'';if(co)co.value=j.country||'';}).catch(()=>{});");
+		html.Append("function saveWifi(){const ws=document.getElementById('wifi_status');const ss=document.getElementById('wifi_ssid');const co=document.getElementById('wifi_country');const pk=document.getElementById('wifi_psk');");
+		html.Append("if(!ss||!ss.value.trim()){if(ws)ws.textContent='SSID required';return;}if(!co||!co.value.trim()){if(ws)ws.textContent='Country required';return;}");
+		html.Append("if(ws)ws.textContent='Saving...';const body=new URLSearchParams({wifi_ssid:ss.value,wifi_psk:pk?pk.value:'',wifi_country:co.value});");
+		html.Append("fetch('/api/wifi/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()}).then(r=>r.json()).then(j=>{if(ws)ws.textContent=j.ok?'Saved. Restart to apply.':(j.message||'Error');}).catch(()=>{if(ws)ws.textContent='Error saving WiFi';});}</script>");
+		html.Append("</main></body></html>");
 
-		const unsigned nBodyLength = HTML.GetLength();
-		if (*pLength < nBodyLength)
+		if (!html.bOk)
 			return HTTPInternalServerError;
-
-		memcpy(pBuffer, static_cast<const char*>(HTML), nBodyLength);
-		*pLength = nBodyLength;
+		*pLength = html.Length();
 		*ppContentType = "text/html; charset=utf-8";
 		return HTTPOK;
 }
@@ -3679,215 +3701,212 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	CString SoundFontIndex;
 	SoundFontIndex.Format("%u / %u", static_cast<unsigned>(m_pMT32Pi->GetCurrentSoundFontIndex()), static_cast<unsigned>(m_pMT32Pi->GetSoundFontCount()));
 
-	CString HTML;
-	HTML += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>mt32-pi status</title><link rel='stylesheet' href='/app.css'></head><body><main>";
-	HTML += "<script src='/app.js'></script>";
-	HTML += "<h1>mt32-pi</h1><p>Live status of system, network and synthesizers.</p>";
-	HTML += "<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>";
-	HTML += "<div class='hero'>";
-	HTML += "<div class='pill'>IP: ";
-		AppendEscaped(HTML, IPAddress);
-	HTML += "</div><div class='pill'>Active synth: ";
-		AppendEscaped(HTML, m_pMT32Pi->GetActiveSynthName());
-	HTML += "</div></div><div class='grid'>";
+	HtmlWriter html(pBuffer, *pLength);
+	html.Append("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>mt32-pi status</title><link rel='stylesheet' href='/app.css'></head><body><main>");
+	html.Append("<script src='/app.js'></script>");
+	html.Append("<h1>mt32-pi</h1><p>Live status of system, network and synthesizers.</p>");
+	html.Append("<nav><a href='/'>Status</a><a href='/sound'>Sound</a><a href='/config'>Config</a><a href='/sequencer'>Sequencer</a><a href='/mixer'>Mixer</a><a href='/monitor'>Monitor</a></nav>");
+	html.Append("<div class='hero'>");
+	html.Append("<div class='pill'>IP: ");
+		AppendEscaped(html, IPAddress);
+	html.Append("</div><div class='pill'>Active synth: ");
+		AppendEscaped(html, m_pMT32Pi->GetActiveSynthName());
+	html.Append("</div></div><div class='grid'>");
 
-	AppendSectionStart(HTML, "System");
-	AppendRow(HTML, "Active synth", m_pMT32Pi->GetActiveSynthName());
-	AppendRow(HTML, "Default synth", DefaultSynthText(pConfig->SystemDefaultSynth));
-	AppendRow(HTML, "USB", BoolText(pConfig->SystemUSB));
-	AppendIntRow(HTML, "I2C baud", pConfig->SystemI2CBaudRate);
-	AppendIntRow(HTML, "Power save timeout", pConfig->SystemPowerSaveTimeout);
-	AppendSectionEnd(HTML);
+	AppendSectionStart(html, "System");
+	AppendRow(html, "Active synth", m_pMT32Pi->GetActiveSynthName());
+	AppendRow(html, "Default synth", DefaultSynthText(pConfig->SystemDefaultSynth));
+	AppendRow(html, "USB", BoolText(pConfig->SystemUSB));
+	AppendIntRow(html, "I2C baud", pConfig->SystemI2CBaudRate);
+	AppendIntRow(html, "Power save timeout", pConfig->SystemPowerSaveTimeout);
+	AppendSectionEnd(html);
 
-	AppendSectionStart(HTML, "Network");
-	AppendRow(HTML, "Interface", m_pMT32Pi->GetNetworkInterfaceName());
-	AppendRow(HTML, "Network ready", BoolText(m_pMT32Pi->IsNetworkReady()));
-	AppendRow(HTML, "Mode", NetworkModeText(pConfig->NetworkMode));
-	AppendRow(HTML, "DHCP", BoolText(pConfig->NetworkDHCP));
-	AppendRow(HTML, "Hostname", pConfig->NetworkHostname);
-	AppendRow(HTML, "Current IP", IPAddress);
-	AppendRow(HTML, "RTP-MIDI", BoolText(pConfig->NetworkRTPMIDI));
-	AppendRow(HTML, "UDP MIDI", BoolText(pConfig->NetworkUDPMIDI));
-	AppendRow(HTML, "FTP", BoolText(pConfig->NetworkFTPServer));
-	AppendRow(HTML, "Web", BoolText(pConfig->NetworkWebServer));
-	AppendIntRow(HTML, "Web port", pConfig->NetworkWebServerPort);
-	AppendSectionEnd(HTML);
+	AppendSectionStart(html, "Network");
+	AppendRow(html, "Interface", m_pMT32Pi->GetNetworkInterfaceName());
+	AppendRow(html, "Network ready", BoolText(m_pMT32Pi->IsNetworkReady()));
+	AppendRow(html, "Mode", NetworkModeText(pConfig->NetworkMode));
+	AppendRow(html, "DHCP", BoolText(pConfig->NetworkDHCP));
+	AppendRow(html, "Hostname", pConfig->NetworkHostname);
+	AppendRow(html, "Current IP", IPAddress);
+	AppendRow(html, "RTP-MIDI", BoolText(pConfig->NetworkRTPMIDI));
+	AppendRow(html, "UDP MIDI", BoolText(pConfig->NetworkUDPMIDI));
+	AppendRow(html, "FTP", BoolText(pConfig->NetworkFTPServer));
+	AppendRow(html, "Web", BoolText(pConfig->NetworkWebServer));
+	AppendIntRow(html, "Web port", pConfig->NetworkWebServerPort);
+	AppendSectionEnd(html);
 
-	AppendSectionStart(HTML, "Audio & control");
-	AppendRow(HTML, "Audio output", AudioOutputText(pConfig->AudioOutputDevice));
-	AppendIntRow(HTML, "Sample rate", pConfig->AudioSampleRate);
-	AppendIntRow(HTML, "Chunk size", pConfig->AudioChunkSize);
-	AppendRow(HTML, "Reversed stereo", BoolText(pConfig->AudioReversedStereo));
-	AppendRow(HTML, "Control", ControlSchemeText(pConfig->ControlScheme));
-	AppendRow(HTML, "Encoder", EncoderTypeText(pConfig->ControlEncoderType));
-	AppendRow(HTML, "Encoder reversed", BoolText(pConfig->ControlEncoderReversed));
-	AppendRow(HTML, "MiSTer", BoolText(pConfig->ControlMister));
-	AppendSectionEnd(HTML);
+	AppendSectionStart(html, "Audio & control");
+	AppendRow(html, "Audio output", AudioOutputText(pConfig->AudioOutputDevice));
+	AppendIntRow(html, "Sample rate", pConfig->AudioSampleRate);
+	AppendIntRow(html, "Chunk size", pConfig->AudioChunkSize);
+	AppendRow(html, "Reversed stereo", BoolText(pConfig->AudioReversedStereo));
+	AppendRow(html, "Control", ControlSchemeText(pConfig->ControlScheme));
+	AppendRow(html, "Encoder", EncoderTypeText(pConfig->ControlEncoderType));
+	AppendRow(html, "Encoder reversed", BoolText(pConfig->ControlEncoderReversed));
+	AppendRow(html, "MiSTer", BoolText(pConfig->ControlMister));
+	AppendSectionEnd(html);
 
-	AppendSectionStart(HTML, "Display");
-	AppendRow(HTML, "Type", LCDTypeText(pConfig->LCDType));
-	AppendIntRow(HTML, "Width", pConfig->LCDWidth);
-	AppendIntRow(HTML, "Height", pConfig->LCDHeight);
-	AppendRow(HTML, "I2C address", I2CAddress);
-	AppendRow(HTML, "Rotation", RotationText(pConfig->LCDRotation));
-	AppendRow(HTML, "Mirror", MirrorText(pConfig->LCDMirror));
-	AppendSectionEnd(HTML);
+	AppendSectionStart(html, "Display");
+	AppendRow(html, "Type", LCDTypeText(pConfig->LCDType));
+	AppendIntRow(html, "Width", pConfig->LCDWidth);
+	AppendIntRow(html, "Height", pConfig->LCDHeight);
+	AppendRow(html, "I2C address", I2CAddress);
+	AppendRow(html, "Rotation", RotationText(pConfig->LCDRotation));
+	AppendRow(html, "Mirror", MirrorText(pConfig->LCDMirror));
+	AppendSectionEnd(html);
 
-	AppendSectionStart(HTML, "MT-32");
-	AppendRow(HTML, "Available", BoolText(m_pMT32Pi->HasMT32Synth()));
-	AppendRow(HTML, "Current ROM", m_pMT32Pi->GetCurrentMT32ROMName());
-	AppendRow(HTML, "ROM set config", MT32ROMSetText(pConfig->MT32EmuROMSet));
-	AppendFloatRow(HTML, "Gain", pConfig->MT32EmuGain);
-	AppendFloatRow(HTML, "Reverb gain", pConfig->MT32EmuReverbGain);
-	AppendRow(HTML, "Reversed stereo", BoolText(pConfig->MT32EmuReversedStereo));
-	AppendSectionEnd(HTML);
+	AppendSectionStart(html, "MT-32");
+	AppendRow(html, "Available", BoolText(m_pMT32Pi->HasMT32Synth()));
+	AppendRow(html, "Current ROM", m_pMT32Pi->GetCurrentMT32ROMName());
+	AppendRow(html, "ROM set config", MT32ROMSetText(pConfig->MT32EmuROMSet));
+	AppendFloatRow(html, "Gain", pConfig->MT32EmuGain);
+	AppendFloatRow(html, "Reverb gain", pConfig->MT32EmuReverbGain);
+	AppendRow(html, "Reversed stereo", BoolText(pConfig->MT32EmuReversedStereo));
+	AppendSectionEnd(html);
 
-	AppendSectionStart(HTML, "SoundFont");
-	AppendRow(HTML, "Available", BoolText(m_pMT32Pi->HasSoundFontSynth()));
-	AppendRow(HTML, "Current name", m_pMT32Pi->GetCurrentSoundFontName());
-	AppendRow(HTML, "Current path", m_pMT32Pi->GetCurrentSoundFontPath());
-	AppendRow(HTML, "Index / total", SoundFontIndex);
-	AppendIntRow(HTML, "Polyphony", pConfig->FluidSynthPolyphony);
-	AppendFloatRow(HTML, "Gain", pConfig->FluidSynthDefaultGain);
-	AppendRow(HTML, "Reverb", BoolText(pConfig->FluidSynthDefaultReverbActive));
-	AppendRow(HTML, "Chorus", BoolText(pConfig->FluidSynthDefaultChorusActive));
-	AppendSectionEnd(HTML);
+	AppendSectionStart(html, "SoundFont");
+	AppendRow(html, "Available", BoolText(m_pMT32Pi->HasSoundFontSynth()));
+	AppendRow(html, "Current name", m_pMT32Pi->GetCurrentSoundFontName());
+	AppendRow(html, "Current path", m_pMT32Pi->GetCurrentSoundFontPath());
+	AppendRow(html, "Index / total", SoundFontIndex);
+	AppendIntRow(html, "Polyphony", pConfig->FluidSynthPolyphony);
+	AppendFloatRow(html, "Gain", pConfig->FluidSynthDefaultGain);
+	AppendRow(html, "Reverb", BoolText(pConfig->FluidSynthDefaultReverbActive));
+	AppendRow(html, "Chorus", BoolText(pConfig->FluidSynthDefaultChorusActive));
+	AppendSectionEnd(html);
 
 	// Mixer status section
 	{
 		const CMT32Pi::TMixerStatus ms = m_pMT32Pi->GetMixerStatus();
 		static const char* PresetNames[] = {"All MT-32", "All FluidSynth", "Split GM", "Custom"};
 		const char* pPresetName = (ms.nPreset >= 0 && ms.nPreset <= 3) ? PresetNames[ms.nPreset] : "Unknown";
-		HTML += "<section><h2>Mixer <a href='/mixer' style='font-size:13px;font-weight:normal;margin-left:8px;'>&#8594; Go</a></h2><table>";
-		AppendRow(HTML, "Enabled", BoolText(ms.bEnabled));
-		AppendRow(HTML, "Preset", pPresetName);
-		AppendRow(HTML, "Dual mode", BoolText(ms.bDualMode));
-		AppendSectionEnd(HTML);
+		html.Append("<section><h2>Mixer <a href='/mixer' style='font-size:13px;font-weight:normal;margin-left:8px;'>&#8594; Go</a></h2><table>");
+		AppendRow(html, "Enabled", BoolText(ms.bEnabled));
+		AppendRow(html, "Preset", pPresetName);
+		AppendRow(html, "Dual mode", BoolText(ms.bDualMode));
+		AppendSectionEnd(html);
 	}
 
-	HTML += "<section><h2>Sequencer <a href='/sequencer' style='font-size:13px;font-weight:normal;margin-left:8px;'>&#8594; Go</a></h2>";
-	HTML += "<span id='idx-seq-badge' class='badge'>Loading...</span>";
-	HTML += "<p id='idx-seq-file' style='margin-top:8px;color:#64748b;word-break:break-all;font-size:12px;margin-bottom:4px;'>&#8212;</p>";
-	HTML += "<div class='seq-prog-bg'><div id='idx-prog' class='seq-prog-fill'></div></div>";
-	HTML += "<p id='idx-seq-time' style='font-size:12px;margin:2px 0 0;color:#64748b;'>0:00 / 0:00</p>";
-	HTML += "<div style='display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;'>";
-	HTML += "<button onclick='idxPrev()' title='Previous'>&#9664;&#9664;</button>";
-	HTML += "<button id='idx-pp-btn' class='primary' onclick='idxPP()'>&#9654; Play</button>";
-	HTML += "<button id='idx-stop-btn' onclick='idxStop()' style='display:none;'>&#9646; Stop</button>";
-	HTML += "<button onclick='idxNext()' title='Next'>&#9654;&#9654;</button>";
-	HTML += "</div></section>";
-	HTML += "<section><h2>Audio profiler</h2><table>";
-	HTML += "<tr><th>Total</th><td id='idx-prof-total'>0 us</td></tr>";
-	HTML += "<tr><th>Average</th><td id='idx-prof-avg'>0 us</td></tr>";
-	HTML += "<tr><th>Deadline</th><td id='idx-prof-deadline'>0 us</td></tr>";
-	HTML += "<tr><th>CPU load</th><td id='idx-prof-cpu'>0%</td></tr>";
-	HTML += "<tr><th>MT-32</th><td id='idx-prof-mt32'>0 us (0%)</td></tr>";
-	HTML += "<tr><th>FluidSynth</th><td id='idx-prof-fluid'>0 us (0%)</td></tr>";
-	HTML += "<tr><th>Mixer</th><td id='idx-prof-mixer'>0 us (0%)</td></tr>";
-	HTML += "</table></section>";
+	html.Append("<section><h2>Sequencer <a href='/sequencer' style='font-size:13px;font-weight:normal;margin-left:8px;'>&#8594; Go</a></h2>");
+	html.Append("<span id='idx-seq-badge' class='badge'>Loading...</span>");
+	html.Append("<p id='idx-seq-file' style='margin-top:8px;color:#64748b;word-break:break-all;font-size:12px;margin-bottom:4px;'>&#8212;</p>");
+	html.Append("<div class='seq-prog-bg'><div id='idx-prog' class='seq-prog-fill'></div></div>");
+	html.Append("<p id='idx-seq-time' style='font-size:12px;margin:2px 0 0;color:#64748b;'>0:00 / 0:00</p>");
+	html.Append("<div style='display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;'>");
+	html.Append("<button onclick='idxPrev()' title='Previous'>&#9664;&#9664;</button>");
+	html.Append("<button id='idx-pp-btn' class='primary' onclick='idxPP()'>&#9654; Play</button>");
+	html.Append("<button id='idx-stop-btn' onclick='idxStop()' style='display:none;'>&#9646; Stop</button>");
+	html.Append("<button onclick='idxNext()' title='Next'>&#9654;&#9654;</button>");
+	html.Append("</div></section>");
+	html.Append("<section><h2>Audio profiler</h2><table>");
+	html.Append("<tr><th>Total</th><td id='idx-prof-total'>0 us</td></tr>");
+	html.Append("<tr><th>Average</th><td id='idx-prof-avg'>0 us</td></tr>");
+	html.Append("<tr><th>Deadline</th><td id='idx-prof-deadline'>0 us</td></tr>");
+	html.Append("<tr><th>CPU load</th><td id='idx-prof-cpu'>0%</td></tr>");
+	html.Append("<tr><th>MT-32</th><td id='idx-prof-mt32'>0 us (0%)</td></tr>");
+	html.Append("<tr><th>FluidSynth</th><td id='idx-prof-fluid'>0 us (0%)</td></tr>");
+	html.Append("<tr><th>Mixer</th><td id='idx-prof-mixer'>0 us (0%)</td></tr>");
+	html.Append("</table></section>");
 
 	// ---- MIDI Recorder section ----
-	HTML += "<section><h2>MIDI Recorder</h2>";
-	HTML += "<span id='idx-rec-badge' class='badge'>Stopped</span>";
-	HTML += "<p style='margin-top:8px;color:#64748b;font-size:12px;margin-bottom:10px;'>Records live MIDI input to SD:recording_NNN.mid (Standard MIDI File Type\u00a00).</p>";
-	HTML += "<button id='idx-rec-btn' class='primary' onclick='toggleRecord()'>&#9210; Start Recording</button>";
-	HTML += "</section>";
+	html.Append("<section><h2>MIDI Recorder</h2>");
+	html.Append("<span id='idx-rec-badge' class='badge'>Stopped</span>");
+	html.Append("<p style='margin-top:8px;color:#64748b;font-size:12px;margin-bottom:10px;'>Records live MIDI input to SD:recording_NNN.mid (Standard MIDI File Type\u00a00).</p>");
+	html.Append("<button id='idx-rec-btn' class='primary' onclick='toggleRecord()'>&#9210; Start Recording</button>");
+	html.Append("</section>");
 
-	HTML += "<section><h2>Live MIDI</h2><table><tr><th>API</th><td><code>/api/midi</code></td></tr><tr><th>Status</th><td id='midi-status'>Loading...</td></tr></table><div class='meter-grid' id='midi-grid'></div></section>";
-	HTML += "<section><h2>Active keyboard</h2><canvas id='kb-canvas' height='64'></canvas></section>";
-	HTML += "<section><h2>Piano roll</h2><canvas id='pr-canvas' height='160'></canvas></section>";
+	html.Append("<section><h2>Live MIDI</h2><table><tr><th>API</th><td><code>/api/midi</code></td></tr><tr><th>Status</th><td id='midi-status'>Loading...</td></tr></table><div class='meter-grid' id='midi-grid'></div></section>");
+	html.Append("<section><h2>Active keyboard</h2><canvas id='kb-canvas' height='64'></canvas></section>");
+	html.Append("<section><h2>Piano roll</h2><canvas id='pr-canvas' height='160'></canvas></section>");
 
-	HTML += "<script>";
-	HTML += "const grid=document.getElementById('midi-grid');const st=document.getElementById('midi-status');";
-	HTML += "for(let i=1;i<=16;i++){const row=document.createElement('div');row.className='meter';row.innerHTML='<span class=\"meter-label\" id=\"mlbl-'+i+'\">CH'+String(i).padStart(2,'0')+'</span><div class=\"meter-bar\"><div class=\"meter-fill\" id=\"fill-'+i+'\"></div><div class=\"meter-peak\" id=\"peak-'+i+'\"></div></div>';grid.appendChild(row);}";
-	HTML += "const _f=[],_p=[],_lt=new Array(16).fill(0),_lv=new Array(16).fill(0),_pt=new Array(16).fill(0),_pk=new Array(16).fill(0),_pa=new Array(16).fill(-9999);";
-	HTML += "for(let i=1;i<=16;i++){_f.push(document.getElementById('fill-'+i));_p.push(document.getElementById('peak-'+i));}";
+	html.Append("<script>");
+	html.Append("const grid=document.getElementById('midi-grid');const st=document.getElementById('midi-status');");
+	html.Append("for(let i=1;i<=16;i++){const row=document.createElement('div');row.className='meter';row.innerHTML='<span class=\"meter-label\" id=\"mlbl-'+i+'\">CH'+String(i).padStart(2,'0')+'</span><div class=\"meter-bar\"><div class=\"meter-fill\" id=\"fill-'+i+'\"></div><div class=\"meter-peak\" id=\"peak-'+i+'\"></div></div>';grid.appendChild(row);}");
+	html.Append("const _f=[],_p=[],_lt=new Array(16).fill(0),_lv=new Array(16).fill(0),_pt=new Array(16).fill(0),_pk=new Array(16).fill(0),_pa=new Array(16).fill(-9999);");
+	html.Append("for(let i=1;i<=16;i++){_f.push(document.getElementById('fill-'+i));_p.push(document.getElementById('peak-'+i));}");
 	// Piano roll state: ring buffer of snapshots
-	HTML += "const PR_COLS=120,PR_ROWS=128;";
-	HTML += "const _prBuf=new Uint8Array(PR_COLS*PR_ROWS);var _prCol=0;";
-	HTML += "const _kbCanvas=document.getElementById('kb-canvas');";
-	HTML += "const _prCanvas=document.getElementById('pr-canvas');";
-	HTML += "const _kbCtx=_kbCanvas?_kbCanvas.getContext('2d'):null;";
-	HTML += "const _prCtx=_prCanvas?_prCanvas.getContext('2d'):null;";
+	html.Append("const PR_COLS=120,PR_ROWS=128;");
+	html.Append("const _prBuf=new Uint8Array(PR_COLS*PR_ROWS);var _prCol=0;");
+	html.Append("const _kbCanvas=document.getElementById('kb-canvas');");
+	html.Append("const _prCanvas=document.getElementById('pr-canvas');");
+	html.Append("const _kbCtx=_kbCanvas?_kbCanvas.getContext('2d'):null;");
+	html.Append("const _prCtx=_prCanvas?_prCanvas.getContext('2d'):null;");
 	// Source colors: 0=off, 1=physical(green), 2=player(blue), 3=webui(orange)
-	HTML += "const SRC_COLORS=['','#4ade80','#60a5fa','#fb923c'];";
+	html.Append("const SRC_COLORS=['','#4ade80','#60a5fa','#fb923c'];");
 	// Engine colors: 0=MT-32(cyan), 1=FluidSynth(magenta)
-	HTML += "const ENG_COLORS=['#22d3ee','#c084fc'];";
-	HTML += "var _chEng=new Array(16).fill(0);var _isMixer=false;";
+	html.Append("const ENG_COLORS=['#22d3ee','#c084fc'];");
+	html.Append("var _chEng=new Array(16).fill(0);var _isMixer=false;");
 	// WHITE_ST: semitone offsets for the 7 white keys in an octave
 	// BLACK_ST: semitone offsets + fractional x position (0-7 white-key units) for 5 black keys
-	HTML += "const W_ST=[0,2,4,5,7,9,11];";
-	HTML += "const B_ST=[1,3,6,8,10];const B_XF=[0.6,1.6,3.6,4.6,5.6];";
-	HTML += "function _noteClr(ch,n){if(_isMixer)return ENG_COLORS[_chEng[ch]]||'#22d3ee';return SRC_COLORS[src_arr[ch][n]]||'#60a5fa';}";
-	HTML += "function _drawKb(){if(!_kbCtx)return;const W=_kbCanvas.width,H=_kbCanvas.height;";
-	HTML += "const octaves=10,ww=W/(octaves*7);_kbCtx.fillStyle='#0a1020';_kbCtx.fillRect(0,0,W,H);";
-	HTML += "for(let o=0;o<octaves;o++){for(let wi=0;wi<7;wi++){const n=o*12+W_ST[wi];if(n>=128)continue;";
-	HTML += "const x=(o*7+wi)*ww;let clr='#cbd5e1';let hitCh=-1;";
-	HTML += "for(let ch=0;ch<16;ch++){if(_notes[ch][n]){clr=_noteClr(ch,n);hitCh=ch;break;}}";
-	HTML += "_kbCtx.fillStyle=clr;_kbCtx.fillRect(x+0.5,H*0.15,ww-1,H*0.84);";
-	HTML += "if(hitCh>=0){_kbCtx.fillStyle='#fff';_kbCtx.font='bold '+Math.max(7,ww*0.6|0)+'px sans-serif';_kbCtx.textAlign='center';";
-	HTML += "_kbCtx.fillText(''+(hitCh+1),x+ww/2,H*0.85);}}}";
-	HTML += "for(let o=0;o<octaves;o++){for(let bi=0;bi<5;bi++){const n=o*12+B_ST[bi];if(n>=128)continue;";
-	HTML += "const x=(o*7+B_XF[bi])*ww;let clr='#1e293b';";
-	HTML += "for(let ch=0;ch<16;ch++){if(_notes[ch][n]){clr=_noteClr(ch,n);break;}}";
-	HTML += "_kbCtx.fillStyle=clr;_kbCtx.fillRect(x,0,ww*0.55,H*0.58);}}}";
-	HTML += "var _notes=Array.from({length:16},()=>new Uint8Array(128));";
-	HTML += "var src_arr=Array.from({length:16},()=>new Uint8Array(128));";
-	HTML += "function _drawPR(){if(!_prCtx)return;const W=_prCanvas.width,H=_prCanvas.height;";
-	HTML += "const rowH=H/128;const colW=W/PR_COLS;";
-	HTML += "_prCtx.fillStyle='#0a1020';_prCtx.fillRect(0,0,W,H);";
-	HTML += "for(let col=0;col<PR_COLS;col++){const ci=(_prCol+col)%PR_COLS;";
-	HTML += "for(let note=0;note<128;note++){const v=_prBuf[ci*PR_ROWS+note];if(!v)continue;";
-	HTML += "_prCtx.fillStyle=_isMixer?ENG_COLORS[v-1]||'#22d3ee':SRC_COLORS[v]||'#60a5fa';";
-	HTML += "_prCtx.fillRect(col*colW,H-(note+1)*rowH,colW-0.5,rowH-0.5);}}}";
-	HTML += "const ATK=0.3,DCY=0.07,PH=1200,PD=0.97;function _rf(ts){for(let i=0;i<16;i++){const t=_lt[i];_lv[i]=t>_lv[i]?_lv[i]+(t-_lv[i])*ATK:_lv[i]+(t-_lv[i])*DCY;if(_pt[i]>_pk[i]){_pk[i]=_pt[i];_pa[i]=ts;}else if(ts-_pa[i]>PH)_pk[i]*=PD;if(_f[i])_f[i].style.width=(_lv[i]*100).toFixed(1)+'%';if(_p[i])_p[i].style.left=(_pk[i]*100).toFixed(1)+'%';}";
-	HTML += "_drawKb();_drawPR();requestAnimationFrame(_rf);}";
-	HTML += "function _resizeCanvases(){if(_kbCanvas){_kbCanvas.width=_kbCanvas.offsetWidth||640;_kbCanvas.height=64;}if(_prCanvas){_prCanvas.width=_prCanvas.offsetWidth||640;_prCanvas.height=160;}}";
-	HTML += "_resizeCanvases();window.addEventListener('resize',_resizeCanvases);";
-	HTML += "requestAnimationFrame(_rf);";
-	HTML += "function applyWS(d){";
-	HTML += "if(d.channels){var _pn=['All MT-32','All Fluid','Split GM','Custom'];st.textContent='Synth: '+(d.synth||'?')+(d.mixer?' ['+(_pn[d.preset]||'Mixer')+']':'')+' | WS';for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_lt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_pt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));if(ch.eng!==undefined)_chEng[ch.ch]=ch.eng;}if(d.mixer!==undefined)_isMixer=d.mixer;";
-	HTML += "var EN=['M','F'];for(var i=0;i<16;i++){var lb=document.getElementById('mlbl-'+(i+1));if(lb){var tag=_isMixer?' '+EN[_chEng[i]]:'';lb.textContent='CH'+String(i+1).padStart(2,'0')+tag;lb.style.color=_isMixer?ENG_COLORS[_chEng[i]]:'#93c5fd';}}}";
-	HTML += "if(d.notes){for(var ch=0;ch<16;ch++){_notes[ch].fill(0);if(d.notes[ch])for(var j=0;j<d.notes[ch].length;j++){const n=d.notes[ch][j];_notes[ch][n]=1;src_arr[ch][n]=(d.src&&d.src[ch])||1;}}";
-	HTML += "_prCol=(_prCol+1)%PR_COLS;_prBuf.fill(0,_prCol*PR_ROWS,(_prCol+1)*PR_ROWS);";
-	HTML += "for(var ch=0;ch<16;ch++){if(d.notes[ch])for(var j=0;j<d.notes[ch].length;j++){const n=d.notes[ch][j];_prBuf[_prCol*PR_ROWS+n]=_isMixer?(_chEng[ch]+1):Math.max(_prBuf[_prCol*PR_ROWS+n],(d.src&&d.src[ch])||1);}}}";
-	HTML += "var b=document.getElementById('idx-seq-badge');if(b){var st2=d.loading?'loading':(d.paused?'paused':(d.playing?'playing':(d.finished?'finished':'stopped')));_idxSt=st2;";
-	HTML += "b.textContent=st2==='loading'?'Loading\u2026':(st2==='playing'?'Playing':(st2==='paused'?'Paused':(st2==='finished'?'Finished':'Stopped')));";
-	HTML += "b.className='badge'+(st2==='playing'?' playing':(st2==='paused'?' paused':(st2==='finished'?' finished':(st2==='loading'?' loading':''))));";
-	HTML += "var ppb=document.getElementById('idx-pp-btn'),stb=document.getElementById('idx-stop-btn');";
-	HTML += "if(ppb){ppb.textContent=st2==='playing'?'\\u23F8 Pause':(st2==='paused'?'\\u25B6 Resume':'\\u25B6 Play');}";
-	HTML += "if(stb)stb.style.display=(st2==='playing'||st2==='paused')?'':'none';}";
-	HTML += "var sf=document.getElementById('idx-seq-file');if(sf)sf.textContent=(d.file||'').replace(/^(SD:|USB:)/,'')||'\\u2014';";
-	HTML += "var pt=document.getElementById('idx-prof-total'),pa=document.getElementById('idx-prof-avg'),pd=document.getElementById('idx-prof-deadline'),pc=document.getElementById('idx-prof-cpu'),pm=document.getElementById('idx-prof-mt32'),pf=document.getElementById('idx-prof-fluid'),px=document.getElementById('idx-prof-mixer');";
-	HTML += "if(pt)pt.textContent=(d.render_us||0)+' us';if(pa)pa.textContent=(d.render_avg_us||0)+' us';if(pd)pd.textContent=((d.deadline_us!==undefined?d.deadline_us:0))+' us';if(pc)pc.textContent=((d.cpu_load!==undefined?d.cpu_load:0))+'%';";
-	HTML += "if(pm)pm.textContent=(d.mt32_render_us||0)+' us ('+((d.mt32_cpu!==undefined?d.mt32_cpu:0))+'%)';if(pf)pf.textContent=(d.fluid_render_us||0)+' us ('+((d.fluid_cpu!==undefined?d.fluid_cpu:0))+'%)';if(px)px.textContent=(d.mixer_render_us||0)+' us ('+((d.mixer_cpu!==undefined?d.mixer_cpu:0))+'%)';";
+	html.Append("const W_ST=[0,2,4,5,7,9,11];");
+	html.Append("const B_ST=[1,3,6,8,10];const B_XF=[0.6,1.6,3.6,4.6,5.6];");
+	html.Append("function _noteClr(ch,n){if(_isMixer)return ENG_COLORS[_chEng[ch]]||'#22d3ee';return SRC_COLORS[src_arr[ch][n]]||'#60a5fa';}");
+	html.Append("function _drawKb(){if(!_kbCtx)return;const W=_kbCanvas.width,H=_kbCanvas.height;");
+	html.Append("const octaves=10,ww=W/(octaves*7);_kbCtx.fillStyle='#0a1020';_kbCtx.fillRect(0,0,W,H);");
+	html.Append("for(let o=0;o<octaves;o++){for(let wi=0;wi<7;wi++){const n=o*12+W_ST[wi];if(n>=128)continue;");
+	html.Append("const x=(o*7+wi)*ww;let clr='#cbd5e1';let hitCh=-1;");
+	html.Append("for(let ch=0;ch<16;ch++){if(_notes[ch][n]){clr=_noteClr(ch,n);hitCh=ch;break;}}");
+	html.Append("_kbCtx.fillStyle=clr;_kbCtx.fillRect(x+0.5,H*0.15,ww-1,H*0.84);");
+	html.Append("if(hitCh>=0){_kbCtx.fillStyle='#fff';_kbCtx.font='bold '+Math.max(7,ww*0.6|0)+'px sans-serif';_kbCtx.textAlign='center';");
+	html.Append("_kbCtx.fillText(''+(hitCh+1),x+ww/2,H*0.85);}}}");
+	html.Append("for(let o=0;o<octaves;o++){for(let bi=0;bi<5;bi++){const n=o*12+B_ST[bi];if(n>=128)continue;");
+	html.Append("const x=(o*7+B_XF[bi])*ww;let clr='#1e293b';");
+	html.Append("for(let ch=0;ch<16;ch++){if(_notes[ch][n]){clr=_noteClr(ch,n);break;}}");
+	html.Append("_kbCtx.fillStyle=clr;_kbCtx.fillRect(x,0,ww*0.55,H*0.58);}}}");
+	html.Append("var _notes=Array.from({length:16},()=>new Uint8Array(128));");
+	html.Append("var src_arr=Array.from({length:16},()=>new Uint8Array(128));");
+	html.Append("function _drawPR(){if(!_prCtx)return;const W=_prCanvas.width,H=_prCanvas.height;");
+	html.Append("const rowH=H/128;const colW=W/PR_COLS;");
+	html.Append("_prCtx.fillStyle='#0a1020';_prCtx.fillRect(0,0,W,H);");
+	html.Append("for(let col=0;col<PR_COLS;col++){const ci=(_prCol+col)%PR_COLS;");
+	html.Append("for(let note=0;note<128;note++){const v=_prBuf[ci*PR_ROWS+note];if(!v)continue;");
+	html.Append("_prCtx.fillStyle=_isMixer?ENG_COLORS[v-1]||'#22d3ee':SRC_COLORS[v]||'#60a5fa';");
+	html.Append("_prCtx.fillRect(col*colW,H-(note+1)*rowH,colW-0.5,rowH-0.5);}}}");
+	html.Append("const ATK=0.3,DCY=0.07,PH=1200,PD=0.97;function _rf(ts){for(let i=0;i<16;i++){const t=_lt[i];_lv[i]=t>_lv[i]?_lv[i]+(t-_lv[i])*ATK:_lv[i]+(t-_lv[i])*DCY;if(_pt[i]>_pk[i]){_pk[i]=_pt[i];_pa[i]=ts;}else if(ts-_pa[i]>PH)_pk[i]*=PD;if(_f[i])_f[i].style.width=(_lv[i]*100).toFixed(1)+'%';if(_p[i])_p[i].style.left=(_pk[i]*100).toFixed(1)+'%';}");
+	html.Append("_drawKb();_drawPR();requestAnimationFrame(_rf);}");
+	html.Append("function _resizeCanvases(){if(_kbCanvas){_kbCanvas.width=_kbCanvas.offsetWidth||640;_kbCanvas.height=64;}if(_prCanvas){_prCanvas.width=_prCanvas.offsetWidth||640;_prCanvas.height=160;}}");
+	html.Append("_resizeCanvases();window.addEventListener('resize',_resizeCanvases);");
+	html.Append("requestAnimationFrame(_rf);");
+	html.Append("function applyWS(d){");
+	html.Append("if(d.channels){var _pn=['All MT-32','All Fluid','Split GM','Custom'];st.textContent='Synth: '+(d.synth||'?')+(d.mixer?' ['+(_pn[d.preset]||'Mixer')+']':'')+' | WS';for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_lt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_pt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));if(ch.eng!==undefined)_chEng[ch.ch]=ch.eng;}if(d.mixer!==undefined)_isMixer=d.mixer;");
+	html.Append("var EN=['M','F'];for(var i=0;i<16;i++){var lb=document.getElementById('mlbl-'+(i+1));if(lb){var tag=_isMixer?' '+EN[_chEng[i]]:'';lb.textContent='CH'+String(i+1).padStart(2,'0')+tag;lb.style.color=_isMixer?ENG_COLORS[_chEng[i]]:'#93c5fd';}}}");
+	html.Append("if(d.notes){for(var ch=0;ch<16;ch++){_notes[ch].fill(0);if(d.notes[ch])for(var j=0;j<d.notes[ch].length;j++){const n=d.notes[ch][j];_notes[ch][n]=1;src_arr[ch][n]=(d.src&&d.src[ch])||1;}}");
+	html.Append("_prCol=(_prCol+1)%PR_COLS;_prBuf.fill(0,_prCol*PR_ROWS,(_prCol+1)*PR_ROWS);");
+	html.Append("for(var ch=0;ch<16;ch++){if(d.notes[ch])for(var j=0;j<d.notes[ch].length;j++){const n=d.notes[ch][j];_prBuf[_prCol*PR_ROWS+n]=_isMixer?(_chEng[ch]+1):Math.max(_prBuf[_prCol*PR_ROWS+n],(d.src&&d.src[ch])||1);}}}");
+	html.Append("var b=document.getElementById('idx-seq-badge');if(b){var st2=d.loading?'loading':(d.paused?'paused':(d.playing?'playing':(d.finished?'finished':'stopped')));_idxSt=st2;");
+	html.Append("b.textContent=st2==='loading'?'Loading\u2026':(st2==='playing'?'Playing':(st2==='paused'?'Paused':(st2==='finished'?'Finished':'Stopped')));");
+	html.Append("b.className='badge'+(st2==='playing'?' playing':(st2==='paused'?' paused':(st2==='finished'?' finished':(st2==='loading'?' loading':''))));");
+	html.Append("var ppb=document.getElementById('idx-pp-btn'),stb=document.getElementById('idx-stop-btn');");
+	html.Append("if(ppb){ppb.textContent=st2==='playing'?'\\u23F8 Pause':(st2==='paused'?'\\u25B6 Resume':'\\u25B6 Play');}");
+	html.Append("if(stb)stb.style.display=(st2==='playing'||st2==='paused')?'':'none';}");
+	html.Append("var sf=document.getElementById('idx-seq-file');if(sf)sf.textContent=(d.file||'').replace(/^(SD:|USB:)/,'')||'\\u2014';");
+	html.Append("var pt=document.getElementById('idx-prof-total'),pa=document.getElementById('idx-prof-avg'),pd=document.getElementById('idx-prof-deadline'),pc=document.getElementById('idx-prof-cpu'),pm=document.getElementById('idx-prof-mt32'),pf=document.getElementById('idx-prof-fluid'),px=document.getElementById('idx-prof-mixer');");
+	html.Append("if(pt)pt.textContent=(d.render_us||0)+' us';if(pa)pa.textContent=(d.render_avg_us||0)+' us';if(pd)pd.textContent=((d.deadline_us!==undefined?d.deadline_us:0))+' us';if(pc)pc.textContent=((d.cpu_load!==undefined?d.cpu_load:0))+'%';");
+	html.Append("if(pm)pm.textContent=(d.mt32_render_us||0)+' us ('+((d.mt32_cpu!==undefined?d.mt32_cpu:0))+'%)';if(pf)pf.textContent=(d.fluid_render_us||0)+' us ('+((d.fluid_cpu!==undefined?d.fluid_cpu:0))+'%)';if(px)px.textContent=(d.mixer_render_us||0)+' us ('+((d.mixer_cpu!==undefined?d.mixer_cpu:0))+'%)';");
 	// Recorder badge + button
-	HTML += "var rb=document.getElementById('idx-rec-btn'),rbg=document.getElementById('idx-rec-badge');";
-	HTML += "if(rb){var rec=!!d.recording;rb.textContent=rec?'\\u23F9 Stop Recording':'\\u23FA Start Recording';rb.className=rec?'danger':'primary';}";
-	HTML += "if(rbg){rbg.textContent=rec?'\\u25CF Recording':'Stopped';rbg.className='badge'+(rec?' recording':'');}";
-	HTML += "var dur=d.duration_ms||1;var elp=d.finished?d.duration_ms:(d.elapsed_ms||0);";
-	HTML += "var pp=document.getElementById('idx-prog');if(pp)pp.style.width=Math.min(100,elp/dur*100).toFixed(1)+'%';";
-	HTML += "var tt=document.getElementById('idx-seq-time');if(tt)tt.textContent=fmt(elp)+' / '+fmt(d.duration_ms);}";
-	HTML += "var _idxSt='stopped';";
-	HTML += "function idxPrev(){_qs('/api/sequencer/prev','',function(){});}";
-	HTML += "function idxNext(){_qs('/api/sequencer/next','',function(){});}";
-	HTML += "function idxStop(){_qs('/api/sequencer/stop','',function(){});}";
-	HTML += "function idxPP(){if(_idxSt==='playing')_qs('/api/sequencer/pause','',function(){});else if(_idxSt==='paused')_qs('/api/sequencer/resume','',function(){});else _qs('/api/sequencer/next','',function(){});}";
-	HTML += "function toggleRecord(){var btn=document.getElementById('idx-rec-btn');if(btn&&btn.classList.contains('danger'))_qs('/api/recorder/stop','',function(){});else _qs('/api/recorder/start','',function(){});}";
-	HTML += "(function(){var ws=null,_rt=0;function conn(){ws=new WebSocket('ws://'+location.hostname+':8765/');ws.onmessage=function(e){try{applyWS(JSON.parse(e.data));}catch(x){}};ws.onclose=function(){_rt=Math.min((_rt||500)*2,8000);setTimeout(conn,_rt);};ws.onerror=function(){ws.close();};}conn();})();";
-	HTML += "</script>";
+	html.Append("var rb=document.getElementById('idx-rec-btn'),rbg=document.getElementById('idx-rec-badge');");
+	html.Append("if(rb){var rec=!!d.recording;rb.textContent=rec?'\\u23F9 Stop Recording':'\\u23FA Start Recording';rb.className=rec?'danger':'primary';}");
+	html.Append("if(rbg){rbg.textContent=rec?'\\u25CF Recording':'Stopped';rbg.className='badge'+(rec?' recording':'');}");
+	html.Append("var dur=d.duration_ms||1;var elp=d.finished?d.duration_ms:(d.elapsed_ms||0);");
+	html.Append("var pp=document.getElementById('idx-prog');if(pp)pp.style.width=Math.min(100,elp/dur*100).toFixed(1)+'%';");
+	html.Append("var tt=document.getElementById('idx-seq-time');if(tt)tt.textContent=fmt(elp)+' / '+fmt(d.duration_ms);}");
+	html.Append("var _idxSt='stopped';");
+	html.Append("function idxPrev(){_qs('/api/sequencer/prev','',function(){});}");
+	html.Append("function idxNext(){_qs('/api/sequencer/next','',function(){});}");
+	html.Append("function idxStop(){_qs('/api/sequencer/stop','',function(){});}");
+	html.Append("function idxPP(){if(_idxSt==='playing')_qs('/api/sequencer/pause','',function(){});else if(_idxSt==='paused')_qs('/api/sequencer/resume','',function(){});else _qs('/api/sequencer/next','',function(){});}");
+	html.Append("function toggleRecord(){var btn=document.getElementById('idx-rec-btn');if(btn&&btn.classList.contains('danger'))_qs('/api/recorder/stop','',function(){});else _qs('/api/recorder/start','',function(){});}");
+	html.Append("(function(){var ws=null,_rt=0;function conn(){ws=new WebSocket('ws://'+location.hostname+':8765/');ws.onmessage=function(e){try{applyWS(JSON.parse(e.data));}catch(x){}};ws.onclose=function(){_rt=Math.min((_rt||500)*2,8000);setTimeout(conn,_rt);};ws.onerror=function(){ws.close();};}conn();})();");
+	html.Append("</script>");
 
-	HTML += "</div></main></body></html>";
+	html.Append("</div></main></body></html>");
 
-	const unsigned nBodyLength = HTML.GetLength();
-	if (*pLength < nBodyLength)
+	if (!html.bOk)
 	{
-		LOGERR("Increase web content buffer to at least %u bytes", nBodyLength);
+		LOGERR("Increase web content buffer (html writer overflow)");
 		return HTTPInternalServerError;
 	}
-
-	memcpy(pBuffer, static_cast<const char*>(HTML), nBodyLength);
-	*pLength = nBodyLength;
+	*pLength = html.Length();
 	*ppContentType = "text/html; charset=utf-8";
 	return HTTPOK;
 }
