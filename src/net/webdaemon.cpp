@@ -2949,14 +2949,19 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		// Card grid (replaces table)
 		html.Append("<div id='mx-ch' style='display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:10px;'></div>");
 		// Buttons
-		html.Append("<div style='display:flex;gap:6px;flex-wrap:wrap;'>");
+		// Buttons: edit group | file group (Save primary)
+		html.Append("<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;'>");
+		html.Append("<div style='display:flex;gap:4px;'>");
 		html.Append("<button onclick='setAllLayer(true)'>Layer All</button>");
 		html.Append("<button onclick='setAllLayer(false)'>Unlayer All</button>");
-		html.Append("<button onclick='resetCCFilters()'>Reset CC Filters</button>");
+		html.Append("<button onclick='resetCCFilters()'>Reset CC</button>");
 		html.Append("<button onclick='resetChVol()'>Reset Vol</button>");
-		html.Append("<button onclick='savePreset()' style='background:#1e3a5f;border-color:#3b82f6;'>&#128190; Save</button>");
-		html.Append("<button onclick='loadPreset()' style='background:#1c2e1a;border-color:#4ade80;'>&#128190; Load</button>");
-		html.Append("</div></section>");
+		html.Append("</div>");
+		html.Append("<span style='border-left:1px solid #334155;height:22px;display:inline-block;margin:0 2px;'></span>");
+		html.Append("<div style='display:flex;gap:4px;'>");
+		html.Append("<button onclick='savePreset()' style='background:#1d4ed8;border-color:#3b82f6;color:#fff;font-weight:600;'>&#128190; Save</button>");
+		html.Append("<button onclick='loadPreset()' style='border-color:#334155;'>&#128194; Load</button>");
+		html.Append("</div></div></section>");
 
 		// Post-mix audio effects
 		html.Append("<section><h2>Audio Effects</h2><div class='grid'>");
@@ -3003,29 +3008,33 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("function renderRouteMap(chs){var mp=document.getElementById('mx-route-map');if(!mp)return;mp.innerHTML='';for(var i=0;i<chs.length;i++){var c=chs[i];var chip=document.createElement('div');var col=c.layered?'#a855f7':(c.engine==='MT-32'?'#3b82f6':(c.engine==='FluidSynth'?'#22c55e':'#475569'));chip.style.cssText='width:40px;height:40px;border-radius:6px;background:'+col+';display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:default;flex-shrink:0;position:relative;';var chnum=document.createElement('span');chnum.style.cssText='font-size:12px;font-weight:bold;color:#fff;line-height:1;';chnum.textContent=c.ch;chip.appendChild(chnum);var eng=document.createElement('span');eng.style.cssText='font-size:8px;color:rgba(255,255,255,0.75);line-height:1;margin-top:2px;';eng.textContent=c.layered?'L':c.engine==='MT-32'?'MT':'SF';chip.appendChild(eng);if(c.remap!==c.ch){var rm=document.createElement('span');rm.style.cssText='font-size:7px;color:rgba(255,255,255,0.6);line-height:1;margin-top:1px;';rm.textContent='\u2192'+c.remap;chip.appendChild(rm);}chip.title='Ch '+c.ch+': '+(c.layered?'Layered (both)':c.engine)+(c.remap!==c.ch?' \u2192ch'+c.remap:'')+' Vol:'+c.vol+'%';mp.appendChild(chip);}}");
 		html.Append("function renderChannels(chs){renderRouteMap(chs);var tb=document.getElementById('mx-ch');tb.innerHTML='';");
 		html.Append("for(var i=0;i<chs.length;i++){var c=chs[i];");
-		html.Append("var ec=c.layered?'#c084fc':(c.engine==='MT-32'?'#93c5fd':(c.engine==='FluidSynth'?'#4ade80':'#475569'));");
-		html.Append("var ecBg=c.layered?'#2e1065':(c.engine==='MT-32'?'#1e3a5f':(c.engine==='FluidSynth'?'#14532d':'#1e293b'));");
-		html.Append("var card=document.createElement('div');");
-		html.Append("card.style.cssText='border-left:4px solid '+ec+';background:'+ecBg+';border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:5px;';");
-		// Row 1: CH badge + instrument name + engine toggle button
-		html.Append("var r1=document.createElement('div');r1.style.cssText='display:flex;align-items:center;gap:6px;min-width:0;';");
-		html.Append("var chb=document.createElement('span');chb.style.cssText='font-size:10px;font-weight:700;color:'+ec+';border:1px solid '+ec+';border-radius:4px;padding:1px 5px;flex-shrink:0;';chb.textContent='CH '+c.ch;r1.appendChild(chb);");
-		html.Append("var ins=document.createElement('span');ins.style.cssText='flex:1;font-size:11px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;';ins.textContent=c.instrument||'\\u2014';ins.title=c.instrument||'';r1.appendChild(ins);");
-		html.Append("var eb=document.createElement('button');eb.style.cssText='font-size:10px;padding:2px 7px;border-radius:6px;background:transparent;border:1px solid '+ec+';color:'+ec+';cursor:pointer;flex-shrink:0;';");
+		// Engine accent color — muted, used only for left border stripe
+		html.Append("var ec=c.layered?'#a78bfa':(c.engine==='MT-32'?'#60a5fa':(c.engine==='FluidSynth'?'#34d399':'#475569'));");
+		// Card: neutral bg always; id for glow animation; accent only on left border
+		html.Append("var card=document.createElement('div');card.id='mxcd-'+c.ch;");
+		html.Append("card.style.cssText='border-left:3px solid '+ec+';background:#1e293b;border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;transition:box-shadow 0.12s,opacity 0.15s;';");
+		// Row 1: CH number (tiny) + instrument name (bold, dominant) + engine tag (right, subtle)
+		html.Append("var r1=document.createElement('div');r1.style.cssText='display:flex;align-items:baseline;gap:5px;min-width:0;';");
+		html.Append("var chb=document.createElement('span');chb.style.cssText='font-size:9px;font-weight:700;color:'+ec+';letter-spacing:0.5px;flex-shrink:0;';chb.textContent='CH'+c.ch;r1.appendChild(chb);");
+		html.Append("var ins=document.createElement('span');ins.style.cssText='flex:1;font-size:13px;font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;';ins.textContent=c.instrument||'\\u2014';ins.title=c.instrument||'';r1.appendChild(ins);");
+		// Engine toggle: minimal, muted by default, accent on hover
+		html.Append("var eb=document.createElement('button');eb.style.cssText='font-size:9px;padding:1px 5px;border-radius:4px;background:transparent;border:1px solid #334155;color:#64748b;cursor:pointer;flex-shrink:0;transition:border-color 0.15s,color 0.15s;';");
 		html.Append("eb.textContent=c.engine==='MT-32'?'MT-32':'SF';eb.dataset.ch=c.ch;eb.dataset.eng=c.engine==='MT-32'?'mt32':'fluidsynth';");
+		html.Append("eb.onmouseenter=(function(a){return function(){this.style.borderColor=a;this.style.color=a;};})(ec);eb.onmouseleave=function(){this.style.borderColor='#334155';this.style.color='#64748b';};");
 		html.Append("eb.onclick=(function(b){return function(){setChEngine(b.dataset.ch,b.dataset.eng==='mt32'?'fluidsynth':'mt32');};})(eb);");
 		html.Append("r1.appendChild(eb);card.appendChild(r1);");
-		// Row 2: VU meter (14px tall, dynamic color via _mxRf)
-		html.Append("var vu=document.createElement('div');vu.style.cssText='position:relative;height:14px;background:#0b1220;border:1px solid #334155;border-radius:999px;overflow:hidden;';");
-		html.Append("var mff=document.createElement('div');mff.id='mxf-'+c.ch;mff.style.cssText='position:absolute;left:0;top:0;bottom:0;width:0%;background:#22c55e;';");
-		html.Append("var mpp=document.createElement('div');mpp.id='mxp-'+c.ch;mpp.style.cssText='position:absolute;top:-1px;bottom:-1px;width:2px;background:#f8fafc;left:0%;';");
+		// Row 2: VU meter — taller, no border, thicker peak hold bar
+		html.Append("var vu=document.createElement('div');vu.style.cssText='position:relative;height:20px;background:#0f172a;border-radius:4px;overflow:hidden;';");
+		html.Append("var mff=document.createElement('div');mff.id='mxf-'+c.ch;mff.style.cssText='position:absolute;left:0;top:0;bottom:0;width:0%;background:#22c55e;border-radius:4px;';");
+		html.Append("var mpp=document.createElement('div');mpp.id='mxp-'+c.ch;mpp.style.cssText='position:absolute;top:0;bottom:0;width:3px;background:rgba(255,255,255,0.9);left:0%;border-radius:2px;box-shadow:0 0 4px rgba(255,255,255,0.6);';");
 		html.Append("vu.appendChild(mff);vu.appendChild(mpp);card.appendChild(vu);");
-		// Row 3: Vol slider + label (with scroll-wheel support)
-		html.Append("var vrow=document.createElement('div');vrow.style.cssText='display:flex;align-items:center;gap:5px;';");
-		html.Append("var vsl=document.createElement('input');vsl.type='range';vsl.min=0;vsl.max=100;vsl.value=c.vol!=null?c.vol:100;vsl.style.cssText='flex:1;cursor:pointer;';vsl.dataset.ch=c.ch;");
-		html.Append("var vlab=document.createElement('span');vlab.style.cssText='font-size:10px;color:#94a3b8;width:28px;text-align:right;flex-shrink:0;';vlab.textContent=(c.vol!=null?c.vol:100)+'%';");
-		html.Append("vsl.oninput=(function(l,ch){return function(){setChVol(ch,this.value);l.textContent=this.value+'%';};})(vlab,c.ch);");
-		html.Append("vsl.onwheel=(function(l,ch){return function(e){e.preventDefault();var nv=Math.max(0,Math.min(100,parseInt(this.value)+(e.deltaY<0?1:-1)));this.value=nv;l.textContent=nv+'%';setChVol(ch,nv);};})(vlab,c.ch);");
+		// Row 3: Vol slider — label hidden at 100% to reduce noise
+		html.Append("var vrow=document.createElement('div');vrow.style.cssText='display:flex;align-items:center;gap:4px;';");
+		html.Append("var vlbl=document.createElement('span');vlbl.style.cssText='font-size:9px;color:#334155;letter-spacing:0.4px;flex-shrink:0;width:22px;';vlbl.textContent='VOL';vrow.appendChild(vlbl);");
+		html.Append("var vsl=document.createElement('input');vsl.type='range';vsl.min=0;vsl.max=100;var initVol=c.vol!=null?c.vol:100;vsl.value=initVol;vsl.style.cssText='flex:1;cursor:pointer;';vsl.dataset.ch=c.ch;");
+		html.Append("var vlab=document.createElement('span');vlab.style.cssText='font-size:10px;color:#94a3b8;width:32px;text-align:right;flex-shrink:0;';vlab.textContent=initVol===100?'':initVol+'%';");
+		html.Append("vsl.oninput=(function(l,ch){return function(){var v=parseInt(this.value);setChVol(ch,v);l.textContent=v===100?'':v+'%';};})(vlab,c.ch);");
+		html.Append("vsl.onwheel=(function(l,ch){return function(e){e.preventDefault();var nv=Math.max(0,Math.min(100,parseInt(this.value)+(e.deltaY<0?1:-1)));this.value=nv;l.textContent=nv===100?'':nv+'%';setChVol(ch,nv);};})(vlab,c.ch);");
 		html.Append("vrow.appendChild(vsl);vrow.appendChild(vlab);card.appendChild(vrow);");
 		// Row 4: Remap + Layer (compact detail row)
 		html.Append("var dr=document.createElement('div');dr.style.cssText='display:flex;align-items:center;gap:8px;';");
@@ -3035,11 +3044,11 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("var ll=document.createElement('label');ll.style.cssText='display:flex;align-items:center;gap:3px;font-size:10px;color:#475569;cursor:pointer;flex-direction:row;';");
 		html.Append("var cb=document.createElement('input');cb.type='checkbox';cb.checked=!!c.layered;cb.dataset.ch=c.ch;");
 		html.Append("cb.onchange=function(){setChLayer(this.dataset.ch,this.checked);};ll.appendChild(cb);ll.appendChild(document.createTextNode('Layer'));dr.appendChild(ll);card.appendChild(dr);");
-		// Double-click to mute / unmute
-		html.Append("card.ondblclick=(function(sl,l,ch){return function(e){if(e.target.tagName==='INPUT'||e.target.tagName==='BUTTON')return;");
-		html.Append("if(parseInt(sl.value)>0){sl.dataset.pv=sl.value;sl.value=0;l.textContent='0%';setChVol(ch,0);}");
-		html.Append("else{var pv=sl.dataset.pv||100;sl.value=pv;l.textContent=pv+'%';setChVol(ch,pv);}");
-		html.Append("};})(vsl,vlab,c.ch);tb.appendChild(card);}}");
+		// Double-click to mute / unmute — dims card for physical feedback
+		html.Append("card.ondblclick=(function(sl,l,ch,crd){return function(e){if(e.target.tagName==='INPUT'||e.target.tagName==='BUTTON')return;");
+		html.Append("if(parseInt(sl.value)>0){sl.dataset.pv=sl.value;sl.value=0;l.textContent='0%';setChVol(ch,0);crd.style.opacity='0.45';}");
+		html.Append("else{var pv=sl.dataset.pv||100;sl.value=pv;l.textContent=pv===100?'':pv+'%';setChVol(ch,pv);crd.style.opacity='1';}");
+		html.Append("};})(vsl,vlab,c.ch,card);tb.appendChild(card);}}");
 
 		// load status
 		html.Append("function loadStatus(){_qs('/api/mixer/status','',function(d){if(!d)return;");
@@ -3077,7 +3086,9 @@ html.Append("var cpu=d.cpu_load;document.getElementById('mx-cpu').textContent=cp
 		html.Append("if(_mxPt[ch]>_mxPk[i]){_mxPk[i]=_mxPt[ch];_mxPa[i]=ts;}else if(ts-_mxPa[i]>1500)_mxPk[i]*=0.95;");
 		html.Append("var lp=_mxLv[i]*100;var col=lp>75?'#ef4444':lp>45?'#f59e0b':'#22c55e';");
 		html.Append("var f=document.getElementById('mxf-'+ch);if(f){f.style.width=lp.toFixed(1)+'%';f.style.background=col;}");
-		html.Append("var p=document.getElementById('mxp-'+ch);if(p)p.style.left=(_mxPk[i]*100).toFixed(1)+'%';}");
+		html.Append("var p=document.getElementById('mxp-'+ch);if(p)p.style.left=(_mxPk[i]*100).toFixed(1)+'%';");
+		// Card glow: intensity tracks level — silent=none, loud=red — silent = none, loud = red
+		html.Append("var cd=document.getElementById('mxcd-'+ch);if(cd&&cd.style.opacity!=='0.45'){if(lp>75)cd.style.boxShadow='0 0 10px 2px rgba(239,68,68,0.45)';else if(lp>45)cd.style.boxShadow='0 0 8px 2px rgba(245,158,11,0.35)';else if(lp>5)cd.style.boxShadow='0 0 5px 1px rgba(34,197,94,0.2)';else cd.style.boxShadow='none';}}");
 		html.Append("requestAnimationFrame(_mxRf);}requestAnimationFrame(_mxRf);");
 		html.Append("(function(){var ws=null,_rt=0;function conn(){ws=new WebSocket('ws://'+location.hostname+':8765/');");
 		html.Append("ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.channels)for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_mxTgt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_mxPt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));}}catch(x){}};");
