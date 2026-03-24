@@ -233,16 +233,23 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 // ──────────────────────────────────────────────────────────────────────────
 static void HandleConnection(CSocket* pSock, CMT32Pi* pMT32Pi, unsigned nIntervalMs)
 {
-	static const size_t kRxBuf = 2048;
-	static const size_t kTxBuf = 3072;
+	static const size_t kRxBuf  = 2048;
+	static const size_t kTxBuf  = 3072;
+	static const size_t kJsnBuf = 2560;
 
-	u8* rxBuf = new u8[kRxBuf];
-	u8* txBuf = new u8[kTxBuf];
+	u8*   rxBuf   = new u8[kRxBuf];
+	u8*   txBuf   = new u8[kTxBuf];
+	char* jsonBuf = new char[kJsnBuf]; // heap: keeps these off the tiny task stack
+	char* prevJSON= new char[kJsnBuf];
+	u8*   framePay= new u8[512];
 
-	if (!rxBuf || !txBuf)
+	if (!rxBuf || !txBuf || !jsonBuf || !prevJSON || !framePay)
 	{
 		delete[] rxBuf;
 		delete[] txBuf;
+		delete[] jsonBuf;
+		delete[] prevJSON;
+		delete[] framePay;
 		delete pSock;
 		return;
 	}
@@ -312,9 +319,6 @@ static void HandleConnection(CSocket* pSock, CMT32Pi* pMT32Pi, unsigned nInterva
 	// ── 4. Main loop: push status every 250ms, read incoming frames ───
 	{
 		unsigned nLastPush = 0;
-		u8 framePay[512];
-		char jsonBuf[2560];  // seq status + 16 channels + notes[] + engine routing
-		char prevJSON[2560]; // last JSON sent; used to skip duplicate frames
 		prevJSON[0] = '\0';
 
 		// HZ=100 → 1 tick = 10ms; clamp to [50,5000] ms
@@ -327,7 +331,8 @@ static void HandleConnection(CSocket* pSock, CMT32Pi* pMT32Pi, unsigned nInterva
 			if (nNow - nLastPush >= nIntervalTicks)
 			{
 				nLastPush = nNow;
-				int jLen = BuildStatusJSON(jsonBuf, sizeof(jsonBuf), pMT32Pi);
+				int jLen = BuildStatusJSON(jsonBuf, kJsnBuf, pMT32Pi);
+				CScheduler::Get()->Yield(); // yield after heavy JSON build
 				if (jLen > 0 && strcmp(jsonBuf, prevJSON) != 0)
 				{
 					int fLen = BuildFrame(txBuf, kTxBuf, 0x01, (u8*)jsonBuf, (size_t)jLen);
@@ -345,7 +350,7 @@ static void HandleConnection(CSocket* pSock, CMT32Pi* pMT32Pi, unsigned nInterva
 			if (n > 0)
 			{
 				u8 opcode = 0;
-				int pLen = ParseClientFrame(rxBuf, (size_t)n, &opcode, framePay, sizeof(framePay));
+				int pLen = ParseClientFrame(rxBuf, (size_t)n, &opcode, framePay, 512);
 
 				if (opcode == 0x8) // Close
 					break;
@@ -411,6 +416,9 @@ static void HandleConnection(CSocket* pSock, CMT32Pi* pMT32Pi, unsigned nInterva
 cleanup:
 	delete[] rxBuf;
 	delete[] txBuf;
+	delete[] jsonBuf;
+	delete[] prevJSON;
+	delete[] framePay;
 	delete pSock;
 }
 
@@ -421,7 +429,7 @@ class CWebSocketWorker : public CTask
 {
 public:
 	CWebSocketWorker(CSocket* pSock, CMT32Pi* pPi, unsigned nIntervalMs)
-		: CTask(8192), m_pSock(pSock), m_pPi(pPi), m_nIntervalMs(nIntervalMs) {}
+		: CTask(16384), m_pSock(pSock), m_pPi(pPi), m_nIntervalMs(nIntervalMs) {}
 
 	void Run() override
 	{
@@ -475,6 +483,9 @@ void CWebSocketDaemon::Run()
 
 	LOGNOTE("WebSocket daemon listening on port %u", (unsigned)m_nPort);
 
+	static const unsigned kMaxClients = 4;
+	unsigned nClients = 0;
+
 	while (true)
 	{
 		CIPAddress clientIP;
@@ -482,7 +493,18 @@ void CWebSocketDaemon::Run()
 		CSocket* pClient = pServer->Accept(&clientIP, &clientPort);
 		if (pClient)
 		{
-			new CWebSocketWorker(pClient, m_pMT32Pi, m_nIntervalMs);
+			if (nClients >= kMaxClients)
+			{
+				// Reject: send minimal 503 and close
+				const char* pReject = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
+				pClient->Send(pReject, strlen(pReject), 0);
+				delete pClient;
+			}
+			else
+			{
+				++nClients;
+				new CWebSocketWorker(pClient, m_pMT32Pi, m_nIntervalMs);
+			}
 		}
 		else
 		{
