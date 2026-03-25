@@ -2903,17 +2903,22 @@ bool CMT32Pi::SetMixerChannelEngine(u8 nChannel, const char* pEngineName)
 	if (!m_bMixerEnabled)
 		SetMixerEnabled(true);
 
-	// Send All Sound Off to the old engine for this channel to prevent stuck notes
+	// Silence the old engine on this channel to prevent stuck notes.
+	// Order matters:
+	//   1. CC 64=0 (sustain pedal off): mt32emu's allNotesOff() respects the hold pedal,
+	//      so any held nnote would ring forever unless we release the pedal first.
+	//   2. CC 120 (All Sound Off): immediate cutoff on FluidSynth; CC 120 is not
+	//      implemented by the real MT-32 hardware (mt32emu ignores it), so it is a
+	//      no-op there but harmless.
+	//   3. CC 123 (All Notes Off): starts the release envelope.  With hold pedal already
+	//      cleared in step 1, this reliably silences MT-32 parts too.
 	CSynthBase* pOldEngine = m_MIDIRouter.GetChannelEngine(nChannel);
 	if (pOldEngine && pOldEngine != pEngine)
 	{
 		const u8 nRemap = m_MIDIRouter.GetChannelRemap(nChannel);
-		// CC 120 (All Sound Off) on the remapped channel
-		const u32 nAllSoundOff = 0x007800B0u | nRemap;
-		pOldEngine->HandleMIDIShortMessage(nAllSoundOff);
-		// CC 123 (All Notes Off) as well
-		const u32 nAllNotesOff = 0x007B00B0u | nRemap;
-		pOldEngine->HandleMIDIShortMessage(nAllNotesOff);
+		pOldEngine->HandleMIDIShortMessage(0x000040B0u | nRemap); // CC 64, val 0  – pedal off
+		pOldEngine->HandleMIDIShortMessage(0x007800B0u | nRemap); // CC 120        – all sound off
+		pOldEngine->HandleMIDIShortMessage(0x007B00B0u | nRemap); // CC 123        – all notes off
 	}
 
 	m_MIDIRouter.SetChannelEngine(nChannel, pEngine);
