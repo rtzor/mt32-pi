@@ -483,9 +483,6 @@ void CWebSocketDaemon::Run()
 
 	LOGNOTE("WebSocket daemon listening on port %u", (unsigned)m_nPort);
 
-	static const unsigned kMaxClients = 4;
-	unsigned nClients = 0;
-
 	while (true)
 	{
 		CIPAddress clientIP;
@@ -493,18 +490,7 @@ void CWebSocketDaemon::Run()
 		CSocket* pClient = pServer->Accept(&clientIP, &clientPort);
 		if (pClient)
 		{
-			if (nClients >= kMaxClients)
-			{
-				// Reject: send minimal 503 and close
-				const char* pReject = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
-				pClient->Send(pReject, strlen(pReject), 0);
-				delete pClient;
-			}
-			else
-			{
-				++nClients;
-				new CWebSocketWorker(pClient, m_pMT32Pi, m_nIntervalMs);
-			}
+			new CWebSocketWorker(pClient, m_pMT32Pi, m_nIntervalMs);
 		}
 		else
 		{
