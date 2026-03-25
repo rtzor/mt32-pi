@@ -3044,6 +3044,20 @@ int CMT32Pi::GetMixerChannelVolume(u8 nChannel) const
 void CMT32Pi::ResetMixerChannelVolumes()
 {
 	m_MIDIRouter.ResetChannelVolumes();
+
+	// The router multiplier is now 1.0 for all channels, but the synth engines
+	// still hold whatever CC7 value was last sent to them.  Restore CC7=127 on
+	// every channel so the engines hear the reset immediately.
+	for (u8 i = 0; i < 16; ++i)
+	{
+		CSynthBase* pEngine = m_MIDIRouter.GetChannelEngine(i);
+		if (pEngine)
+		{
+			const u8  nRemap = m_MIDIRouter.GetChannelRemap(i);
+			const u32 nMsg   = 0x0007B0u | nRemap | (static_cast<u32>(127) << 16); // CC7=127
+			pEngine->HandleMIDIShortMessage(nMsg);
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
