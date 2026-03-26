@@ -1,60 +1,30 @@
-## Please note
+## ⚠️ Experimental Fork
 
-**It's unlikely that there will be any further releases of mt32-pi.**
+This repository is a personal, **highly experimental fork** of the original project.
 
-I have endured a sustained campaign of abuse from members of the VOGONS forum, been labelled a "clout-chaser", had threats sent to my personal email address, code been used in other projects without proper accreditation, my 3D print designs stolen and sold by faceless eBay/Etsy sellers, personal attacks made towards me when people don't get their feature request... the list goes on and on.
+- It may be unstable, incomplete, or broken.
+- Features are prototypes and may contain bugs.
+- **No releases are provided** — you must build from source.
+- **Only tested on Raspberry Pi 3 (64-bit / AArch64)**. Other boards may or may not work.
+- I do **not guarantee** that anything works as expected.
+- I do **not provide support** for this fork.
 
-*There is only so much I can take.*
+If you are looking for a stable and fully functional version, please use the original project:
+👉 https://github.com/dwhinham/mt32-pi
 
-My mental health has been in decline as a direct result of this behavior; the joy of working on this project has pretty much gone. There is nothing to be gained from putting time and hard work into it any more. There is no gratitude, no encouragement - just entitled behavior and grift.
+All credit goes to the original author, who did an outstanding job creating and maintaining this project.
 
-To those who supported this project in the past, especially whilst I was a struggling student who needed all the uplift I could get, thank you sincerely.
+### Purpose of this fork
 
----
-
-[![mt32-pi CI](https://github.com/dwhinham/mt32-pi/workflows/mt32-pi%20CI/badge.svg)](https://github.com/dwhinham/mt32-pi/actions?query=workflow:"mt32-pi+CI")
-
-<h1 align="center">
-    <img width="90%" title="mt32-pi - Baremetal synthesizer system" src="images/mt32pi_logo.svg">
-</h1>
-
-- A work-in-progress baremetal MIDI synthesizer for the Raspberry Pi 3 or above, based on [Munt], [FluidSynth] and [Circle].
-- Turn your Raspberry Pi into a dedicated emulation of the [famous multi-timbre sound module][Roland MT-32] used by countless classic MS-DOS, PC-98 and Sharp X68000 games!
-- Add your favorite [SoundFonts][SoundFont] to expand your synthesizer with [General MIDI], [Roland GS], or even [Yamaha XG] support for endless MIDI possibilities.
-- Includes General MIDI and Roland GS support out of the box thanks to [GeneralUser GS] by S. Christian Collins.
-- No operating system, no complex Linux audio configuration; just super-low latency audio.
-- Easy to configure and ready to play from cold-boot in a matter of seconds.
-- The perfect companion for your vintage PC or [MiSTer FPGA] setup.
+This fork exists purely for experimentation, testing new ideas, and personal learning.
+Expect things to break — that's part of the process.
 
 ---
-
-## ✔️ Project status
-
-<img title="mt32-pi running on the Raspberry Pi 3 A+ with the Arananet PI-MIDI HAT." width="280rem" align="right" src="images/mt32pi_pimidi.png">
-
-- Supports Raspberry Pi Zero 2 W, Raspberry Pi 3 Model A+, B, and B+, Raspberry Pi 4 Model B, and CM4 series.
-  * Pi 2 works, but only with concessions on playback quality.
-  * Pi Zero (original) and Pi 1 are unfortunately too slow (even with an overclock) and unsupported.
-- PWM headphone jack audio.
-  * Quality is known to be poor (aliasing/distortion on quieter sounds).
-  * It is not currently known whether this can be improved or not.
-- [I²S Hi-Fi DAC support][I²S Hi-Fi DACs].
-  * This is the recommended audio output method for the best quality audio.
-- MIDI input via [USB][USB MIDI interfaces], [GPIO][GPIO MIDI interface] MIDI interfaces, or the [serial port].
-- [Configuration file] for selecting hardware options and fine tuning.
-- [LCD status screen support][LCD and OLED displays] (for MT-32 SysEx messages and status information).
-- Simple [physical control surface][control surface] using buttons and rotary encoder.
-- [MiSTer FPGA integration via user port][MiSTer FPGA].
-- Network MIDI support via [RTP-MIDI] and [raw UDP socket].
-- [Embedded FTP server][FTP server] for remote access to files.
-- Web-based control interface with 5 pages (Status, Sound, Config, Sequencer, Mixer).
-- Advanced MIDI routing: per-channel engine assignment, channel remapping, dual-synth layering, CC filtering.
 
 ## 🔀 Extended Edition Features
 
 This fork adds a full web-based control interface, a dual-engine MIDI mixer/router system, a built-in MIDI file sequencer, and real-time audio/MIDI monitoring on top of the original mt32-pi.
 
-> For the full feature reference see [README2.md](README2.md).
 
 ### System architecture
 
@@ -65,7 +35,7 @@ This fork adds a full web-based control interface, a dual-engine MIDI mixer/rout
 | 0 | MIDI polling, parsing, routing, sequencer tick, network, control | Continuous |
 | 1 | LCD / MiSTer status display | ~16 ms |
 | 2 | Audio render (hot path — synth + mixer) | ~11.6 ms (256 frames @ 48 kHz) |
-| 3 | Free | — |
+| 3 | currently available | — |
 
 No mutexes on the audio hot path. Inter-core communication uses `volatile` flags and lock-free ring buffers.
 
@@ -166,16 +136,30 @@ Serial / USB / GPIO IRQ
 
 | Feature | Description |
 |---------|-------------|
-| **Web UI** | 5-page browser interface: Status, Sound, Config, Sequencer, Mixer |
-| **MIDI Router** | Per-channel routing to MT-32 and/or FluidSynth, with remapping and CC filtering |
-| **Audio Mixer** | Independent volume (0–100%) and pan for each synth engine |
-| **Sequencer** | Built-in SMF Type 0/1 player with loop and auto-next support |
+| **Web UI** | 5-page browser interface: Status, Sound, Config, Sequencer, Mixer — dark/light mode, toast notifications, responsive CSS |
+| **MIDI Router** | Per-channel routing to MT-32 and/or FluidSynth, with remapping, CC filtering, and visual routing diagram |
+| **Audio Mixer** | Independent volume (0–100%) and pan for each synth engine; card-grid UI with smart VU meters |
+| **Sequencer** | Built-in SMF Type 0/1 player with loop, auto-next, pause/resume, prev/next, seek memory, and loading indicator |
+| **Playlist** | Queue with shuffle and repeat modes |
 | **MIDI Monitor** | Real-time 16-channel meters, piano roll, virtual keyboard, SysEx viewer |
-| **WebSocket** | Live status stream on port 8765 for instant UI updates |
-| **Live control** | Change all synth parameters at runtime via web UI or REST API |
-| **Unit tests** | doctest suite covering MIDI router, audio mixer, and MIDI parser |
+| **MIDI Recording** | Record incoming MIDI to `.mid` files on the SD card |
+| **MIDI Thru** | Universal MIDI Thru — all physical inputs (Serial/USB/GPIO) forwarded to UART TX |
+| **OSC Control** | UDP Open Sound Control receiver with per-engine volume/pan and web UI integration |
+| **Audio Effects** | Post-mix effects chain: parametric EQ, reverb, and limiter |
+| **Audio Profiling** | Per-component timing stats streamed via WebSocket for performance monitoring |
+| **NEON SIMD** | ARM NEON-optimized audio mixer hot path and float→int conversion in `AudioTask` |
+| **WebSocket** | Live JSON status stream on port 8765 (configurable port and push interval); skips unchanged frames |
+| **HTTP Keep-Alive** | Persistent connections via Circle httpdaemon patch for faster page loads |
+| **Live control** | Change all synth parameters at runtime via web UI, REST API, or OSC messages |
+| **SF3 support** | Ogg Vorbis-compressed SoundFonts via stb_vorbis (no external libs) |
+| **DLS support** | Native DLS soundbank loader (e.g. Windows `gm.dls`, `RLNDGM2.DLS`) |
+| **SoundFont Favorites** | Mark preferred SoundFonts via localStorage in the browser UI |
+| **SoundFont Preview** | Audition SoundFonts from the web UI before applying |
+| **Unit tests** | doctest suite covering MIDI router, audio mixer, MIDI parser, and config parser (125 tests, ~1 190 assertions) |
 
 ### Building
+
+> ⚠️ **Only tested on Raspberry Pi 3 (64-bit AArch64).** Other boards are untested and may not work with this fork.
 
 ```bash
 # Set cross-compiler path (adjust to your toolchain location)
@@ -185,8 +169,10 @@ export PATH="$HOME/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-elf/bin:$PATH
 make BOARD=pi3-64 -j$(nproc)
 
 # Deploy via FTP (once the Pi is running)
-curl -T kernel8.img ftp://<pi-ip>/ --user mt32-pi:mt32-pi
+curl -T kernel8.img ftp://<pi-ip>/kernel8.img --user mt32-pi:mt32-pi
 ```
+
+> There are no pre-built releases. You must build from source.
 
 ### Running the test suite
 
@@ -202,109 +188,3 @@ The test suite uses [doctest](https://github.com/doctest/doctest) and covers `CM
 - `feat/<short-name>` — one branch per feature or fix; open a PR to merge.
 
 ---
-
-## ✨ Quick-start guide
-
-🆕 If you have a Linux computer or MiSTer FPGA device, you may wish to try the new interactive [mt32-pi installer script](scripts).
-
-Otherwise, for a manual installation:
-
-1. Download the latest release from the [Releases] section.
-    * If you are **updating an old version**, read the [Updating mt32-pi] wiki page for the correct procedure.
-2. Extract contents to a blank [FAT32-formatted SD card][SD card preparation].
-    * Read the [SD card preparation] wiki page for hints on formatting an SD card correctly (especially under Windows).
-3. For MT-32 support, add your MT-32 or CM-32L ROM images to the `roms` directory - you have to provide these for copyright reasons.
-    * You will need at least one control ROM and one PCM ROM.
-    * For information on using multiple ROM sets and switching between them, see the [MT-32 synthesis] wiki page.
-    * The file names or extensions don't matter; mt32-pi will scan and detect their types automatically.
-4. Optionally add your favorite SoundFonts to the `soundfonts` directory.
-    * For information on using multiple SoundFonts and switching between them, see the [SoundFont synthesis] wiki page.
-    * Again, file names/extensions don't matter.
-5. Edit the `mt32-pi.cfg` file to enable any optional hardware (Hi-Fi DAC, displays, buttons). Refer to [the wiki][mt32-pi wiki] to find supported hardware.
-    * **MiSTer users**: Read the [MiSTer setup] section of the wiki for the recommended configuration, and ignore the following two steps.
-6. Connect a [USB MIDI interface][USB MIDI interfaces] or [GPIO MIDI circuit][GPIO MIDI interface] to the Pi, and connect some speakers to the headphone jack.
-7. Connect your vintage PC's MIDI OUT to the Pi's MIDI IN and (optionally) vice versa.
-
-## 📚 Documentation
-
-More detailed documentation for mt32-pi can now be found over at the [mt32-pi wiki]. Please read the wiki pages to learn about all of mt32-pi's features and supported hardware, and consider helping us improve it!
-
-## ❓ Help
-
-Take a look at our [FAQ] page for answers to the most common questions about mt32-pi.
-
-If you need some help with mt32-pi and the wiki doesn't answer your questions, head over to the [discussions] area and feel free to start a topic.
-
-> ⚠ **Note**: Please don't use the Issues area to ask for help - Issues are intended for reproducible bug reports and feature requests. Thank you!
-
-## ❤️ Contributing
-
-This project is generally quite stable and very usable, but still considered by its author to be in early stages of development.
-
-Hence, please **DO NOT** work on large features and open pull requests without prior discussion. There is a strong possibility that work-in-progress code for proposed features already exists, but may not yet be public, and your work will have to be rejected.
-
-Trivial changes to the code that fix issues are always welcome, as are improvements to documentation, and hardware/software compatibility reports.
-
-## ⚖️ License
-
-This project's source code is licensed under the [GNU General Public License v3.0][license].
-
-The [mt32-pi logo] was designed by and is © Dale Whinham. The terms of use for the logo are as follows:
-
-- The logo **MAY** be used on open-source community hardware.
-- The logo **MAY** be used to link back to this repository or for similar promotional purposes of a strictly **non-commercial nature** (e.g. blog posts, social media, YouTube videos).
-- The logo **MUST NOT** be used on or for the marketing of closed-source or commercial hardware (e.g. case designs, PCBs), without express permission.
-- The logo **MUST NOT** be used for any other commercial products or purposes without express permission.
-- The shape and overall design of the logo **MUST NOT** be modified or distorted. You **MAY** change the colors if required.
-- If in any doubt, please ask. Thank you.
-
-## 🙌 Acknowledgments
-
-- Many thanks go out to @rc55 and @nswaldman for their encouragement and testing! ❤️
-- A huge thank you to everyone who has donated via Ko-fi, PayPal, or Amazon - your support means a lot! ❤️
-- Special thanks to [Edu Arana (Arananet)], [Porkchop Express (MiSTerAddons)], @djhardrich, [Nat (MiSTerFPGA.co.uk)], [Ricardo Saraiva (UltimateMiSTer.com)], [Serge Defever (Serdashop)], and @opjose who have all generously donated hardware to the project.
-- The [Munt] team for their incredible work reverse-engineering the Roland MT-32 and producing an excellent emulation and well-structured project.
-- The [FluidSynth] team for their excellent and easily-portable SoundFont synthesizer project.
-- [S. Christian Collins][GeneralUser GS] for the excellent GeneralUser GS SoundFont and for kindly giving permission to include it in the project.
-- The [Circle] and [circle-stdlib] projects for providing the best C++ baremetal framework for the Raspberry Pi.
-- The [inih] project for a nice, lightweight config file parser.
-
-[Changelog]: https://github.com/dwhinham/mt32-pi/blob/master/CHANGELOG.md
-[circle-stdlib]: https://github.com/smuehlst/circle-stdlib
-[Circle]: https://github.com/rsta2/circle
-[Configuration file]: https://github.com/dwhinham/mt32-pi/wiki/Configuration-file
-[Control surface]: https://github.com/dwhinham/mt32-pi/wiki/Control-surface
-[Discussions]: https://github.com/dwhinham/mt32-pi/discussions
-[Edu Arana (Arananet)]: https://www.arananet.net/pedidos
-[FAQ]: https://github.com/dwhinham/mt32-pi/wiki/FAQ
-[FluidSynth]: http://www.fluidsynth.org
-[FTP server]: https://github.com/dwhinham/mt32-pi/wiki/Embedded-FTP-server
-[General MIDI]: https://en.wikipedia.org/wiki/General_MIDI
-[GeneralUser GS]: http://schristiancollins.com/generaluser.php
-[GPIO MIDI interface]: https://github.com/dwhinham/mt32-pi/wiki/GPIO-MIDI-interface
-[I²S Hi-Fi DACs]: https://github.com/dwhinham/mt32-pi/wiki/I%C2%B2S-DACs
-[inih]: https://github.com/benhoyt/inih
-[LCD and OLED displays]: https://github.com/dwhinham/mt32-pi/wiki/LCD-and-OLED-displays
-[License]: https://github.com/dwhinham/mt32-pi/blob/master/LICENSE
-[MiSTer FPGA]: https://github.com/dwhinham/mt32-pi/wiki/MiSTer-FPGA
-[MiSTer setup]: https://github.com/dwhinham/mt32-pi/wiki/MiSTer-FPGA%3A-Setup-and-usage
-[MT-32 synthesis]: https://github.com/dwhinham/mt32-pi/wiki/MT-32-synthesis
-[mt32-pi logo]: https://github.com/dwhinham/mt32-pi/blob/master/images/mt32pi_logo.svg
-[mt32-pi wiki]: https://github.com/dwhinham/mt32-pi/wiki
-[Munt]: https://github.com/munt/munt
-[Nat (MiSTerFPGA.co.uk)]: https://misterfpga.co.uk
-[Porkchop Express (MiSTerAddons)]: https://misteraddons.com
-[Releases]: https://github.com/dwhinham/mt32-pi/releases
-[Ricardo Saraiva (UltimateMiSTer.com)]: https://ultimatemister.com
-[Roland GS]: https://en.wikipedia.org/wiki/Roland_GS
-[Roland MT-32]: https://en.wikipedia.org/wiki/Roland_MT-32
-[RTP-MIDI]: https://github.com/dwhinham/mt32-pi/wiki/Networking%3A-RTP-MIDI-%28AppleMIDI%29
-[Raw UDP socket]: https://github.com/dwhinham/mt32-pi/wiki/Networking%3A-UDP-MIDI
-[SD card preparation]: https://github.com/dwhinham/mt32-pi/wiki/SD-card-preparation
-[Serge Defever (Serdashop)]: http://serdashop.com
-[Serial port]: https://github.com/dwhinham/mt32-pi/wiki/MIDI-via-RS-232-or-USB-to-serial
-[SoundFont synthesis]: https://github.com/dwhinham/mt32-pi/wiki/SoundFont-synthesis
-[SoundFont]: https://en.wikipedia.org/wiki/SoundFont
-[Updating mt32-pi]: https://github.com/dwhinham/mt32-pi/wiki/Updating-mt32-pi
-[USB MIDI interfaces]: https://github.com/dwhinham/mt32-pi/wiki/USB-MIDI-interfaces
-[Yamaha XG]: https://en.wikipedia.org/wiki/Yamaha_XG
