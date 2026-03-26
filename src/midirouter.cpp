@@ -211,9 +211,6 @@ void CMIDIRouter::RouteSysEx(const u8* pData, size_t nSize)
 
 bool CMIDIRouter::IsDualMode() const
 {
-	if (!m_pMT32 || !m_pFluidSynth)
-		return false;
-
 	// A layered channel sends to both engines even if the channel map only
 	// lists one engine — so any active layering means dual mode.
 	if (HasAnyLayering())
@@ -221,14 +218,21 @@ bool CMIDIRouter::IsDualMode() const
 
 	bool bHasMT32 = false;
 	bool bHasFluid = false;
+	bool bHasYmfm = false;
 	for (unsigned i = 0; i < NumChannels; ++i)
 	{
 		if (m_pChannelMap[i] == m_pMT32)
 			bHasMT32 = true;
 		else if (m_pChannelMap[i] == m_pFluidSynth)
 			bHasFluid = true;
+		else if (m_pChannelMap[i] == m_pYmfm)
+			bHasYmfm = true;
 
-		if (bHasMT32 && bHasFluid)
+		const unsigned nActiveEngines = (bHasMT32 ? 1u : 0u)
+			+ (bHasFluid ? 1u : 0u)
+			+ (bHasYmfm ? 1u : 0u);
+
+		if (nActiveEngines >= 2)
 			return true;
 	}
 	return false;
@@ -238,6 +242,7 @@ CSynthBase* CMIDIRouter::GetPrimaryEngine() const
 {
 	unsigned nMT32Count = 0;
 	unsigned nFluidCount = 0;
+	unsigned nYmfmCount = 0;
 
 	for (unsigned i = 0; i < NumChannels; ++i)
 	{
@@ -245,11 +250,15 @@ CSynthBase* CMIDIRouter::GetPrimaryEngine() const
 			++nMT32Count;
 		else if (m_pChannelMap[i] == m_pFluidSynth)
 			++nFluidCount;
+		else if (m_pChannelMap[i] == m_pYmfm)
+			++nYmfmCount;
 	}
 
-	if (nMT32Count >= nFluidCount)
+	if (nMT32Count >= nFluidCount && nMT32Count >= nYmfmCount)
 		return m_pMT32;
-	return m_pFluidSynth;
+	if (nFluidCount >= nYmfmCount)
+		return m_pFluidSynth;
+	return m_pYmfm;
 }
 
 void CMIDIRouter::SetChannelRemap(u8 nSrcChannel, u8 nDstChannel)
@@ -282,6 +291,12 @@ const char* CMIDIRouter::GetChannelEngineName(u8 nChannel) const
 	CSynthBase* pEngine = m_pChannelMap[nChannel];
 	if (!pEngine)
 		return "none";
+	if (pEngine == m_pMT32)
+		return "MT-32";
+	if (pEngine == m_pFluidSynth)
+		return "FluidSynth";
+	if (pEngine == m_pYmfm)
+		return "OPL3";
 
 	return pEngine->GetName();
 }

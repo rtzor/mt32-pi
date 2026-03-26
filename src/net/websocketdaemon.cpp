@@ -147,11 +147,15 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 
 	if (n <= 0 || (size_t)n >= bufSize) return -1;
 
-	// eng: 0=MT-32, 1=FluidSynth (derived from engine name string)
+	// eng: 0=MT-32, 1=FluidSynth, 2=OPL3 (derived from engine name string)
 	for (int i = 0; i < 16; i++)
 	{
 		const char* pEng = st.Mixer.pChannelEngine[i];
-		int nEng = (pEng && pEng[0] == 'F') ? 1 : 0;  // "FluidSynth" vs "MT-32"
+		int nEng = 0;
+		if (pEng && pEng[0] == 'F')
+			nEng = 1;
+		else if (pEng && pEng[0] == 'O')
+			nEng = 2;
 		int added = snprintf(buf + n, bufSize - n,
 			"%s{\"ch\":%d,\"lv\":%.3f,\"pk\":%.3f,\"eng\":%d}",
 			i > 0 ? "," : "", i,

@@ -2941,6 +2941,8 @@ bool CMT32Pi::SetMixerPreset(int nPreset)
 		m_pCurrentSynth = m_pMT32Synth;
 	else if (Preset == TRouterPreset::SingleFluid && m_pSoundFontSynth)
 		m_pCurrentSynth = m_pSoundFontSynth;
+	else if (Preset == TRouterPreset::SingleYmfm && m_pYmfmSynth)
+		m_pCurrentSynth = m_pYmfmSynth;
 
 	// Update dual mode state
 	const bool bDual = m_MIDIRouter.IsDualMode();
@@ -2963,6 +2965,10 @@ bool CMT32Pi::SetMixerChannelEngine(u8 nChannel, const char* pEngineName)
 		pEngine = m_pMT32Synth;
 	else if (strcmp(pEngineName, "fluidsynth") == 0 || strcmp(pEngineName, "FluidSynth") == 0)
 		pEngine = m_pSoundFontSynth;
+	else if (strcmp(pEngineName, "opl3") == 0 || strcmp(pEngineName, "ymfm") == 0
+		|| strcmp(pEngineName, "OPL3") == 0 || strcmp(pEngineName, "ymfm OPL3") == 0
+		|| strcmp(pEngineName, "ymfm OPL2") == 0)
+		pEngine = m_pYmfmSynth;
 	else
 		return false;
 
