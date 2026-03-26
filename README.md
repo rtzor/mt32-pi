@@ -23,7 +23,7 @@ Expect things to break — that's part of the process.
 
 ## 🔀 Extended Edition Features
 
-This fork adds a full web-based control interface, a dual-engine MIDI mixer/router system, a built-in MIDI file sequencer, and real-time audio/MIDI monitoring on top of the original mt32-pi.
+This fork adds a full web-based control interface, a three-engine MIDI mixer/router system, a built-in MIDI file sequencer, real-time audio/MIDI monitoring, and a new Yamaha FM synth path based on ymfm (OPL3/OPL2) on top of the original mt32-pi.
 
 
 ### System architecture
@@ -62,19 +62,19 @@ No mutexes on the audio hot path. Inter-core communication uses `volatile` flags
 │                    │                │  CC filter, layering              │
 │                    └──┬─────────┬──┘                                   │
 │                       │         │                                       │
-│             ┌─────────┘         └─────────┐                            │
-│             │                             │                            │
-│    ┌────────▼───────┐           ┌─────────▼──────┐                    │
-│    │  CMT32Synth    │           │ CSoundFontSynth │                    │
-│    │  (munt / MT-32)│           │  (FluidSynth)   │                    │
-│    └────────┬───────┘           └─────────┬──────┘                    │
-│             │                             │                            │
-│             └─────────┐       ┌───────────┘                            │
-│                       │       │                                        │
-│               ┌───────▼───────▼───────┐                               │
-│               │     CAudioMixer        │  volume, pan, solo,           │
-│               │                        │  per-channel & per-engine     │
-│               └───────────┬───────────┘                               │
+│             ┌─────────┬───────────────┬─────────┐                     │
+│             │         │               │         │                     │
+│    ┌────────▼───────┐ │   ┌──────────▼──────┐  │  ┌───────────────┐  │
+│    │  CMT32Synth    │ │   │ CSoundFontSynth │  │  │  CYmfmSynth   │  │
+│    │  (munt / MT-32)│ │   │  (FluidSynth)   │  │  │ (ymfm OPL3/2) │  │
+│    └────────┬───────┘ │   └──────────┬──────┘  │  └───────┬───────┘  │
+│             │         │              │         │          │          │
+│             └─────────┴──────┬───────┴─────────┴──────────┘          │
+│                               │                                        │
+│                      ┌────────▼─────────┐                              │
+│                      │    CAudioMixer    │  volume, pan, solo,         │
+│                      │                   │  per-channel & per-engine   │
+│                      └────────┬─────────┘                              │
 └───────────────────────────│───────────────────────────────────────────┘
                             │  (shared buffer, written Core 0 / read Core 2)
 ┌───────────────────────────│───────────────────────────────────────────┐
@@ -90,7 +90,7 @@ No mutexes on the audio hot path. Inter-core communication uses `volatile` flags
 │  ┌────────────┐  ┌─────────────────┐  ┌────────────┐  ┌────────────┐  │
 │  │ CWebDaemon │  │CWebSocketDaemon │  │ AppleMIDI  │  │  UDP MIDI  │  │
 │  │ HTTP:80    │  │  WS:8765        │  │  RTP MIDI  │  │  (opt.)    │  │
-│  │ 5 pages +  │  │  JSON status    │  │            │  │            │  │
+│  │ 6 pages +  │  │  JSON status    │  │            │  │            │  │
 │  │ REST API   │  │  ~250 ms push   │  │            │  │            │  │
 │  └────────────┘  └─────────────────┘  └────────────┘  └────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -108,15 +108,15 @@ Serial / USB / GPIO IRQ
   CMIDIParser ──► OnSysExMessage ──► SysEx handler (synth params, custom)
         │
         ▼
-  CMIDIRouter
-    ├── channel route table  (MT-32 | FluidSynth | Both | Off)
-    ├── channel remap        (source ch → target ch per engine)
-    ├── CC filter            (block CC per engine)
-    └── layering flag        (duplicate to both engines)
-        │              │
-        ▼              ▼
-  CMT32Synth     CSoundFontSynth
-  (munt)         (FluidSynth)
+      CMIDIRouter
+            ├── channel route table  (MT-32 | FluidSynth | OPL3 | Layered | Off)
+            ├── channel remap        (source ch → target ch per engine)
+            ├── CC filter            (block CC per engine)
+            └── layering flag        (duplicate to multiple engines)
+                        │              │               │
+                        ▼              ▼               ▼
+      CMT32Synth     CSoundFontSynth   CYmfmSynth
+      (munt)         (FluidSynth)      (ymfm OPL3/OPL2)
 ```
 
 #### Key source files
@@ -124,10 +124,11 @@ Serial / USB / GPIO IRQ
 | File | ~LOC | Role |
 |------|------|------|
 | `src/mt32pi.cpp` | 2 500 | Main orchestrator: init, loop, MIDI, sequencer, network, state |
-| `src/net/webdaemon.cpp` | 3 000 | HTTP server — 5 pages + full REST API |
+| `src/net/webdaemon.cpp` | 3 000 | HTTP server — 6 pages + full REST API |
 | `src/net/websocketdaemon.cpp` | 400 | WebSocket — JSON status push every 250 ms (configurable) |
-| `src/audiomixer.cpp` | 600 | Dual-engine mix: volume, pan, solo, per-channel gain |
-| `src/midirouter.cpp` | 500 | Per-channel routing, remapping, CC filtering, layering |
+| `src/audiomixer.cpp` | 600 | Multi-engine mix: volume, pan, solo, per-channel gain |
+| `src/midirouter.cpp` | 500 | Per-channel routing across MT-32, FluidSynth, and OPL3; remapping, CC filtering, layering |
+| `src/synth/ymfmsynth.cpp` | 700 | Yamaha FM engine wrapper for ymfm with OPL3/OPL2 bank support |
 | `src/fluidsequencer.cpp` | 800 | SMF player wrapping `fluid_player_t` |
 | `include/config.def` | — | Single-source config: one `CFG()` line generates INI parser + default |
 | `tests/` | — | doctest suite — 125 tests / 1 190 assertions, host-native |
@@ -136,9 +137,10 @@ Serial / USB / GPIO IRQ
 
 | Feature | Description |
 |---------|-------------|
-| **Web UI** | 5-page browser interface: Status, Sound, Config, Sequencer, Mixer — dark/light mode, toast notifications, responsive CSS |
-| **MIDI Router** | Per-channel routing to MT-32 and/or FluidSynth, with remapping, CC filtering, and visual routing diagram |
-| **Audio Mixer** | Independent volume (0–100%) and pan for each synth engine; card-grid UI with smart VU meters |
+| **Web UI** | 6-page browser interface: Status, Sound, Config, Sequencer, Mixer, Monitor — dark/light mode, toast notifications, responsive CSS |
+| **ymfm / OPL3 engine** | Third synth engine based on ymfm, selectable as OPL3 or OPL2, with runtime status, mixer integration, and web UI controls |
+| **MIDI Router** | Per-channel routing to MT-32, FluidSynth, and/or OPL3, with remapping, CC filtering, and visual routing diagram |
+| **Audio Mixer** | Independent volume (0–100%) and pan for each synth engine, including OPL3; card-grid UI with smart VU meters |
 | **Sequencer** | Built-in SMF Type 0/1 player with loop, auto-next, pause/resume, prev/next, seek memory, and loading indicator |
 | **Playlist** | Queue with shuffle and repeat modes |
 | **MIDI Monitor** | Real-time 16-channel meters, piano roll, virtual keyboard, SysEx viewer |
@@ -156,6 +158,29 @@ Serial / USB / GPIO IRQ
 | **SoundFont Favorites** | Mark preferred SoundFonts via localStorage in the browser UI |
 | **SoundFont Preview** | Audition SoundFonts from the web UI before applying |
 | **Unit tests** | doctest suite covering MIDI router, audio mixer, MIDI parser, and config parser (125 tests, ~1 190 assertions) |
+
+### Synth engines
+
+| Engine | Backend | Typical use | Notes |
+|--------|---------|-------------|-------|
+| **MT-32** | Munt / `CMT32Synth` | Roland LA synthesis, MT-32/CM-32L content | Requires MT-32 ROMs |
+| **SoundFont** | FluidSynth / `CSoundFontSynth` | General MIDI / GS playback | Supports SF2, SF3, and native DLS in this fork |
+| **OPL3** | ymfm / `CYmfmSynth` | AdLib / Sound Blaster FM style playback | Can run in OPL3 or OPL2 mode; bank file optional, built-in GM fallback available |
+
+#### ymfm configuration
+
+The ymfm engine is configured in the `[ymfm]` section of `mt32-pi.cfg`:
+
+```ini
+[ymfm]
+chip=opl3
+bank_file=
+```
+
+- `chip=opl3` enables 18-voice stereo OPL3 mode.
+- `chip=opl2` forces 9-voice OPL2 compatibility mode.
+- `bank_file=` can point to a `.wopl` or `.op2` bank relative to the SD root.
+- Leaving `bank_file` empty uses the built-in GM fallback bank.
 
 ### Building
 
