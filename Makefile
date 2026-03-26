@@ -5,7 +5,7 @@
 include Config.mk
 
 .DEFAULT_GOAL=all
-.PHONY: submodules circle-stdlib mt32emu fluidsynth all clean veryclean
+.PHONY: submodules circle-stdlib mt32emu fluidsynth ymfm all clean veryclean
 
 #
 # Functions to apply/reverse patches only if not completely applied/reversed already
@@ -142,9 +142,35 @@ $(FLUIDSYNTHBUILDDIR)/.done: $(CIRCLESTDLIBHOME)/.done
 	@touch $@
 
 #
+# Build ymfm
+#
+YMFM_SRCS := $(wildcard $(YMFMHOME)/src/*.cpp)
+YMFM_OBJS := $(patsubst $(YMFMHOME)/src/%.cpp,$(YMFMBUILDDIR)/%.o,$(YMFM_SRCS))
+
+ymfm: $(YMFMBUILDDIR)/.done
+
+$(YMFMBUILDDIR)/.done: $(CIRCLESTDLIBHOME)/.done $(YMFMLIB)
+	@touch $@
+
+$(YMFMBUILDDIR)/%.o: $(YMFMHOME)/src/%.cpp | $(YMFMBUILDDIR)
+	@echo "  CXX   $<"
+	@$(PREFIX)g++ $(CFLAGS_EXTERNAL) -std=c++14 -Ofast -DNDEBUG \
+		-Wno-stringop-overflow \
+		-isystem "$(NEWLIBDIR)/include" \
+		-I $(YMFMHOME)/src \
+		-c $< -o $@
+
+$(YMFMLIB): $(YMFM_OBJS)
+	@echo "  AR    $@"
+	@$(PREFIX)ar rcs $@ $^
+
+$(YMFMBUILDDIR):
+	@mkdir -p $@
+
+#
 # Build kernel itself
 #
-all: circle-stdlib mt32emu fluidsynth
+all: circle-stdlib mt32emu fluidsynth ymfm
 	@$(MAKE) -f Kernel.mk $(KERNEL).img $(KERNEL).hex
 
 #
@@ -172,3 +198,6 @@ mrproper: clean
 
 # Clean FluidSynth
 	@$(RM) -r $(FLUIDSYNTHBUILDDIR)
+
+# Clean ymfm
+	@$(RM) -r $(YMFMBUILDDIR)

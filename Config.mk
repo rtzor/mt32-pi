@@ -95,4 +95,8 @@ FLUIDSYNTHHOME=$(realpath external/fluidsynth)
 FLUIDSYNTHBUILDDIR=build-fluidsynth
 FLUIDSYNTHLIB=$(FLUIDSYNTHBUILDDIR)/src/libfluidsynth.a
 
+YMFMHOME=$(realpath external/ymfm)
+YMFMBUILDDIR=build-ymfm
+YMFMLIB=$(YMFMBUILDDIR)/libymfm.a
+
 INIHHOME=$(realpath external/inih)

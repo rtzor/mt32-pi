@@ -14,3 +14,7 @@
 	path = external/fluidsynth
 	url = https://github.com/FluidSynth/fluidsynth.git
 	ignore = dirty
+[submodule "external/ymfm"]
+	path = external/ymfm
+	url = https://github.com/aaronsgiles/ymfm.git
+	ignore = dirty

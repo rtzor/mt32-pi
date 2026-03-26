@@ -37,7 +37,8 @@ class CConfig
 public:
 	#define ENUM_SYSTEMDEFAULTSYNTH(ENUM) \
 		ENUM(MT32, mt32)                  \
-		ENUM(SoundFont, soundfont)
+		ENUM(SoundFont, soundfont)        \
+		ENUM(Ymfm, ymfm)
 
 	#define ENUM_AUDIOOUTPUTDEVICE(ENUM) \
 		ENUM(PWM, pwm)                   \
@@ -76,12 +77,17 @@ public:
 		ENUM(SplitGM, split_gm)          \
 		ENUM(Custom, custom)
 
+	#define ENUM_YMFMCHIP(ENUM) \
+		ENUM(OPL3, opl3)        \
+		ENUM(OPL2, opl2)
+
 	CONFIG_ENUM(TSystemDefaultSynth, ENUM_SYSTEMDEFAULTSYNTH);
 	CONFIG_ENUM(TAudioOutputDevice, ENUM_AUDIOOUTPUTDEVICE);
 	CONFIG_ENUM(TControlScheme, ENUM_CONTROLSCHEME);
 	CONFIG_ENUM(TLCDType, ENUM_LCDTYPE);
 	CONFIG_ENUM(TNetworkMode, ENUM_NETWORKMODE);
 	CONFIG_ENUM(TMixerMode, ENUM_MIXERMODE);
+	CONFIG_ENUM(TYmfmChip, ENUM_YMFMCHIP);
 
 	CConfig();
 	bool Initialize(const char* pPath);
@@ -110,6 +116,7 @@ public:
 	static bool ParseOption(const char* pString, TLCDMirror* pOut);
 	static bool ParseOption(const char* pString, TNetworkMode* pOut);
 	static bool ParseOption(const char* pString, TMixerMode* pOut);
+	static bool ParseOption(const char* pString, TYmfmChip* pOut);
 
 private:
 	static int INIHandler(void* pUser, const char* pSection, const char* pName, const char* pValue);

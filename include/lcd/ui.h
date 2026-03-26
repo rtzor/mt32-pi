@@ -32,6 +32,7 @@ class CMT32Pi;
 class CSynthBase;
 class CSoundFontSynth;
 class CMT32Synth;
+class CYmfmSynth;
 
 class CUserInterface
 {
@@ -55,7 +56,7 @@ void EnterPowerSavingMode();
 void ExitPowerSavingMode();
 
 // Encoder menu
-void EnterMenu(CSoundFontSynth* pSF, CMT32Synth* pMT32, CSynthBase* pCurrent, CMT32Pi* pMT32Pi = nullptr);
+void EnterMenu(CSoundFontSynth* pSF, CMT32Synth* pMT32, CSynthBase* pCurrent, CMT32Pi* pMT32Pi = nullptr, CYmfmSynth* pYmfm = nullptr);
 void ExitMenu();
 bool IsInMenu() const { return m_State == TState::InMenu; }
 bool MenuEncoderEvent(s8 nDelta);
@@ -114,6 +115,7 @@ u8 m_SysExPixelBuffer[SysExPixelBufferSize];
 
 CSoundFontSynth* m_pMenuSF;
 CMT32Synth*      m_pMenuMT32;
+CYmfmSynth*      m_pMenuYmfm;
 CSynthBase*      m_pMenuCurrentSynth;
 
 size_t  m_nMenuCursor;
@@ -152,6 +154,10 @@ bool  m_bMenuMixerEnabled;
 int   m_nMenuMixerPreset;    // TRouterPreset as int
 int   m_nMenuMixerMT32Vol;   // 0-100
 int   m_nMenuMixerFluidVol;  // 0-100
+int   m_nMenuMixerYmfmVol;   // 0-100
+
+// OPL3 (ymfm) menu state
+int   m_nMenuYmfmVol;        // 0-100
 };
 
 #endif

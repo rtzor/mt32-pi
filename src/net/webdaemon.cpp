@@ -91,6 +91,7 @@ namespace
 		Control,
 		MT32Emu,
 		FluidSynth,
+		Ymfm,
 		LCD,
 		Network,
 	};
@@ -175,6 +176,8 @@ namespace
 		{
 			case CConfig::TSystemDefaultSynth::MT32:
 				return "MT-32";
+			case CConfig::TSystemDefaultSynth::Ymfm:
+				return "OPL3";
 			case CConfig::TSystemDefaultSynth::SoundFont:
 			default:
 				return "SoundFont";
@@ -576,6 +579,8 @@ namespace
 			return TConfigSection::MT32Emu;
 		if (std::strcmp(pTrimmed, "[fluidsynth]") == 0)
 			return TConfigSection::FluidSynth;
+		if (std::strcmp(pTrimmed, "[ymfm]") == 0)
+			return TConfigSection::Ymfm;
 		if (std::strcmp(pTrimmed, "[lcd]") == 0)
 			return TConfigSection::LCD;
 		if (std::strcmp(pTrimmed, "[network]") == 0)
@@ -723,7 +728,11 @@ namespace
 		AppendJSONPairInt(JSON, "mt32_partial_count",  st.nMT32PartialCount);
 		AppendJSONPairBool(JSON, "mixer_enabled",  st.Mixer.bEnabled);
 		AppendJSONPairInt(JSON, "mixer_preset",    st.Mixer.nPreset);
-		AppendJSONPairBool(JSON, "mixer_dual_mode", st.Mixer.bDualMode, false);
+		AppendJSONPairBool(JSON, "mixer_dual_mode", st.Mixer.bDualMode);
+		AppendJSONPairFloat(JSON, "ymfm_volume",     st.Mixer.fYmfmVolume);
+		AppendJSONPairBool(JSON, "ymfm_available",  st.bYmfmAvailable);
+		AppendJSONPair(JSON,     "ymfm_bank_name",  st.pYmfmBankName ? st.pYmfmBankName : "");
+		AppendJSONPairBool(JSON, "ymfm_chip_is_opl3", st.bYmfmChipIsOPL3, false);
 	}
 }
 
@@ -1414,6 +1423,7 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		AppendJSONPairFloat(JSON, "master_volume", ms.fMasterVolume);
 		AppendJSONPairFloat(JSON, "mt32_volume", ms.fMT32Volume);
 		AppendJSONPairFloat(JSON, "fluid_volume", ms.fFluidVolume);
+		AppendJSONPairFloat(JSON, "ymfm_volume", ms.fYmfmVolume);
 		AppendJSONPairFloat(JSON, "mt32_pan", ms.fMT32Pan);
 		AppendJSONPairFloat(JSON, "fluid_pan", ms.fFluidPan);
 
@@ -1493,6 +1503,16 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		{
 			if (ParseIntStrict(Value, nVal))
 				bApplied = m_pMT32Pi->SetMixerEngineVolume("fluidsynth", nVal);
+		}
+		else if (std::strcmp(Param, "opl3_volume") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetMixerEngineVolume("ymfm", nVal);
+		}
+		else if (std::strcmp(Param, "opl3_pan") == 0)
+		{
+			if (ParseIntStrict(Value, nVal))
+				bApplied = m_pMT32Pi->SetMixerEnginePan("ymfm", nVal);
 		}
 		else if (std::strcmp(Param, "mt32_pan") == 0)
 		{
@@ -1756,6 +1776,8 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		char FluidSynthChorusLevel[16];
 		char FluidSynthChorusVoices[16];
 		char FluidSynthChorusSpeed[16];
+		char YmfmBankFile[64];
+		char YmfmChip[16];
 		char LCDType[32];
 		char LCDWidth[16];
 		char LCDHeight[16];
@@ -1815,6 +1837,8 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		 || !GetFormValue(pFormData, "fs_chorus_level", FluidSynthChorusLevel, sizeof(FluidSynthChorusLevel))
 		 || !GetFormValue(pFormData, "fs_chorus_voices", FluidSynthChorusVoices, sizeof(FluidSynthChorusVoices))
 		 || !GetFormValue(pFormData, "fs_chorus_speed", FluidSynthChorusSpeed, sizeof(FluidSynthChorusSpeed))
+		 || !GetFormValue(pFormData, "ymfm_bank_file", YmfmBankFile, sizeof(YmfmBankFile))
+		 || !GetFormValue(pFormData, "ymfm_chip", YmfmChip, sizeof(YmfmChip))
 		 || !GetFormValue(pFormData, "lcd_type", LCDType, sizeof(LCDType))
 		 || !GetFormValue(pFormData, "lcd_width", LCDWidth, sizeof(LCDWidth))
 		 || !GetFormValue(pFormData, "lcd_height", LCDHeight, sizeof(LCDHeight))
@@ -1877,6 +1901,7 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		float ParsedFluidSynthChorusLevel = 0.0f;
 		int ParsedFluidSynthChorusVoices = 0;
 		float ParsedFluidSynthChorusSpeed = 0.0f;
+		CConfig::TYmfmChip ParsedYmfmChip;
 		CConfig::TLCDType ParsedLCDType;
 		int ParsedLCDWidth = 0;
 		int ParsedLCDHeight = 0;
@@ -1936,6 +1961,7 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 		 || !CConfig::ParseOption(FluidSynthChorusLevel, &ParsedFluidSynthChorusLevel)
 		 || !CConfig::ParseOption(FluidSynthChorusVoices, &ParsedFluidSynthChorusVoices)
 		 || !CConfig::ParseOption(FluidSynthChorusSpeed, &ParsedFluidSynthChorusSpeed)
+		 || !CConfig::ParseOption(YmfmChip, &ParsedYmfmChip)
 		 || !CConfig::ParseOption(LCDType, &ParsedLCDType)
 		 || !CConfig::ParseOption(LCDWidth, &ParsedLCDWidth)
 		 || !CConfig::ParseOption(LCDHeight, &ParsedLCDHeight)
@@ -1999,6 +2025,8 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 			{TConfigSection::FluidSynth, "chorus_level",     FluidSynthChorusLevel,     false},
 			{TConfigSection::FluidSynth, "chorus_voices",    FluidSynthChorusVoices,    false},
 			{TConfigSection::FluidSynth, "chorus_speed",     FluidSynthChorusSpeed,     false},
+			{TConfigSection::Ymfm,       "bank_file",        YmfmBankFile,              false},
+			{TConfigSection::Ymfm,       "chip",             YmfmChip,                  false},
 			{TConfigSection::LCD,        "type",             LCDType,                   false},
 			{TConfigSection::LCD,        "width",            LCDWidth,                  false},
 			{TConfigSection::LCD,        "height",           LCDHeight,                 false},
@@ -2072,6 +2100,8 @@ THTTPStatus CWebDaemon::HandleAPIRequest(const char* pPath,
 				bApplied = m_pMT32Pi->SetActiveSynth(TSynth::MT32);
 			else if (std::strcmp(Value, "soundfont") == 0)
 				bApplied = m_pMT32Pi->SetActiveSynth(TSynth::SoundFont);
+			else if (std::strcmp(Value, "opl3") == 0)
+				bApplied = m_pMT32Pi->SetActiveSynth(TSynth::Ymfm);
 		}
 		else if (std::strcmp(Param, "mt32_rom_set") == 0)
 		{
@@ -3004,7 +3034,7 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("<section><h2>Mode</h2><div class='grid'>");
 		html.Append("<label>Preset<select id='mx-preset' onchange='setPreset(this.value)'>");
 		html.Append("<option value='0'>Single MT-32</option><option value='1'>Single FluidSynth</option>");
-		html.Append("<option value='2'>Split GM</option><option value='3'>Custom</option></select></label>");
+		html.Append("<option value='2'>Single OPL3</option><option value='3'>Split GM</option><option value='4'>Custom</option></select></label>");
 		html.Append("<label>Mixer<select id='mx-enabled' onchange='setEnabled(this.value)'>");
 		html.Append("<option value='1'>Enabled</option><option value='0'>Disabled</option></select></label>");
 		html.Append("</div></section>");
@@ -3013,6 +3043,7 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("<section><h2>Engine Levels</h2><div class='grid'>");
 		html.Append("<label>MT-32 vol<input id='mx-mt32v' type='range' min='0' max='100' oninput='clearTimeout(this._t);this._t=setTimeout(()=>setParam(\"mt32_volume\",this.value),40)'></label>");
 		html.Append("<label>FluidSynth vol<input id='mx-fluidv' type='range' min='0' max='100' oninput='clearTimeout(this._t);this._t=setTimeout(()=>setParam(\"fluid_volume\",this.value),40)'></label>");
+		html.Append("<label>OPL3 vol<input id='mx-opl3v' type='range' min='0' max='100' oninput='clearTimeout(this._t);this._t=setTimeout(()=>setParam(\"opl3_volume\",this.value),40)'></label>");
 		html.Append("<label>MT-32 pan<input id='mx-mt32p' type='range' min='-100' max='100' oninput='clearTimeout(this._t);this._t=setTimeout(()=>setParam(\"mt32_pan\",this.value),40)'></label>");
 		html.Append("<label>FluidSynth pan<input id='mx-fluidp' type='range' min='-100' max='100' oninput='clearTimeout(this._t);this._t=setTimeout(()=>setParam(\"fluid_pan\",this.value),40)'></label>");
 		html.Append("</div></section>");
@@ -3035,6 +3066,7 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("<div style='display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;font-size:11px;'>");
 		html.Append("<span><span style='display:inline-block;width:10px;height:10px;border-radius:2px;background:#3b82f6;vertical-align:middle;margin-right:3px;'></span>MT-32</span>");
 		html.Append("<span><span style='display:inline-block;width:10px;height:10px;border-radius:2px;background:#22c55e;vertical-align:middle;margin-right:3px;'></span>FluidSynth</span>");
+		html.Append("<span><span style='display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;vertical-align:middle;margin-right:3px;'></span>OPL3</span>");
 		html.Append("<span><span style='display:inline-block;width:10px;height:10px;border-radius:2px;background:#a855f7;vertical-align:middle;margin-right:3px;'></span>Layered</span>");
 		html.Append("<span><span style='display:inline-block;width:10px;height:10px;border-radius:2px;background:#475569;vertical-align:middle;margin-right:3px;'></span>None</span>");
 		html.Append("<span style='color:#64748b;font-size:10px;margin-left:4px;'>(dbl-click=mute, scroll=vol)</span>");
@@ -3098,11 +3130,14 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("function resetChVol(){_qs('/api/mixer/set','param=channel_volume_reset&value=1',function(r){if(r&&r.ok){loadStatus();showToast('Vol reset');}else showToast('Error',false);});}");
 
 		// render
-		html.Append("function renderRouteMap(chs){var mp=document.getElementById('mx-route-map');if(!mp)return;mp.innerHTML='';for(var i=0;i<chs.length;i++){var c=chs[i];var chip=document.createElement('div');var col=c.layered?'#a855f7':(c.engine==='MT-32'?'#3b82f6':(c.engine==='FluidSynth'?'#22c55e':'#475569'));chip.style.cssText='width:40px;height:40px;border-radius:6px;background:'+col+';display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:default;flex-shrink:0;position:relative;';var chnum=document.createElement('span');chnum.style.cssText='font-size:12px;font-weight:bold;color:#fff;line-height:1;';chnum.textContent=c.ch;chip.appendChild(chnum);var eng=document.createElement('span');eng.style.cssText='font-size:8px;color:rgba(255,255,255,0.75);line-height:1;margin-top:2px;';eng.textContent=c.layered?'L':c.engine==='MT-32'?'MT':'SF';chip.appendChild(eng);if(c.remap!==c.ch){var rm=document.createElement('span');rm.style.cssText='font-size:7px;color:rgba(255,255,255,0.6);line-height:1;margin-top:1px;';rm.textContent='\u2192'+c.remap;chip.appendChild(rm);}chip.title='Ch '+c.ch+': '+(c.layered?'Layered (both)':c.engine)+(c.remap!==c.ch?' \u2192ch'+c.remap:'')+' Vol:'+c.vol+'%';mp.appendChild(chip);}}");
+		html.Append("function mxEngineKey(n){return n==='MT-32'?'mt32':(n==='FluidSynth'?'fluidsynth':(n==='OPL3'?'opl3':'none'));}");
+		html.Append("function mxEngineColor(n,layered){return layered?'#a855f7':(n==='MT-32'?'#3b82f6':(n==='FluidSynth'?'#22c55e':(n==='OPL3'?'#f59e0b':'#475569')));}");
+		html.Append("function mxEngineLabel(n,layered){return layered?'L':(n==='MT-32'?'MT':(n==='FluidSynth'?'SF':(n==='OPL3'?'OPL':'--')));}");
+		html.Append("function renderRouteMap(chs){var mp=document.getElementById('mx-route-map');if(!mp)return;mp.innerHTML='';for(var i=0;i<chs.length;i++){var c=chs[i];var chip=document.createElement('div');var col=mxEngineColor(c.engine,!!c.layered);chip.style.cssText='width:40px;height:40px;border-radius:6px;background:'+col+';display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:default;flex-shrink:0;position:relative;';var chnum=document.createElement('span');chnum.style.cssText='font-size:12px;font-weight:bold;color:#fff;line-height:1;';chnum.textContent=c.ch;chip.appendChild(chnum);var eng=document.createElement('span');eng.style.cssText='font-size:8px;color:rgba(255,255,255,0.75);line-height:1;margin-top:2px;';eng.textContent=mxEngineLabel(c.engine,!!c.layered);chip.appendChild(eng);if(c.remap!==c.ch){var rm=document.createElement('span');rm.style.cssText='font-size:7px;color:rgba(255,255,255,0.6);line-height:1;margin-top:1px;';rm.textContent='\u2192'+c.remap;chip.appendChild(rm);}chip.title='Ch '+c.ch+': '+(c.layered?'Layered (both)':c.engine)+(c.remap!==c.ch?' \u2192ch'+c.remap:'')+' Vol:'+c.vol+'%';mp.appendChild(chip);}}");
 		html.Append("function renderChannels(chs){renderRouteMap(chs);var tb=document.getElementById('mx-ch');tb.innerHTML='';var isLight=document.body.classList.contains('light');var cardBg=isLight?'#f8fafc':'#1e293b';var insClr=isLight?'#0f172a':'#e2e8f0';var vuBg=isLight?'#e2e8f0':'#0f172a';var ebBdr=isLight?'#cbd5e1':'#334155';var mutedClr=isLight?'#4b5563':'#64748b';var detClr=isLight?'#4b5563':'#475569';");
 		html.Append("for(var i=0;i<chs.length;i++){var c=chs[i];");
 		// Engine accent color — muted, used only for left border stripe
-		html.Append("var ec=c.layered?'#a78bfa':(c.engine==='MT-32'?'#60a5fa':(c.engine==='FluidSynth'?'#34d399':'#475569'));");
+		html.Append("var ec=c.layered?'#a78bfa':(c.engine==='MT-32'?'#60a5fa':(c.engine==='FluidSynth'?'#34d399':(c.engine==='OPL3'?'#fbbf24':'#475569')));");
 		// Card: neutral bg always; id for glow animation; accent only on left border
 		html.Append("var card=document.createElement('div');card.id='mxcd-'+c.ch;");
 		html.Append("card.style.cssText='border-left:3px solid '+ec+';background:'+cardBg+';border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;transition:box-shadow 0.12s,opacity 0.15s;';");
@@ -3112,9 +3147,9 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("var ins=document.createElement('span');ins.style.cssText='flex:1;font-size:13px;font-weight:600;color:'+insClr+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;';ins.textContent=c.instrument||'\\u2014';ins.title=c.instrument||'';r1.appendChild(ins);");
 		// Engine toggle: minimal, muted by default, accent on hover
 		html.Append("var eb=document.createElement('button');eb.style.cssText='font-size:9px;padding:1px 5px;border-radius:4px;background:transparent;border:1px solid '+ebBdr+';color:'+mutedClr+';cursor:pointer;flex-shrink:0;transition:border-color 0.15s,color 0.15s;';");
-		html.Append("eb.textContent=c.engine==='MT-32'?'MT-32':'SF';eb.dataset.ch=c.ch;eb.dataset.eng=c.engine==='MT-32'?'mt32':'fluidsynth';");
+		html.Append("eb.textContent=c.engine==='MT-32'?'MT-32':(c.engine==='OPL3'?'OPL':'SF');eb.dataset.ch=c.ch;eb.dataset.eng=mxEngineKey(c.engine);");
 		html.Append("eb.onmouseenter=(function(a){return function(){this.style.borderColor=a;this.style.color=a;};})(ec);eb.onmouseleave=(function(bd,cl){return function(){this.style.borderColor=bd;this.style.color=cl;};})(ebBdr,mutedClr);");
-		html.Append("eb.onclick=(function(b){return function(){setChEngine(b.dataset.ch,b.dataset.eng==='mt32'?'fluidsynth':'mt32');};})(eb);");
+		html.Append("eb.onclick=(function(b){return function(){var ne=b.dataset.eng==='mt32'?'fluidsynth':(b.dataset.eng==='fluidsynth'?'opl3':'mt32');setChEngine(b.dataset.ch,ne);};})(eb);");
 		html.Append("r1.appendChild(eb);card.appendChild(r1);");
 		// Row 2: VU meter — taller, no border, thicker peak hold bar
 		html.Append("var vu=document.createElement('div');vu.style.cssText='position:relative;height:20px;background:'+vuBg+';border-radius:4px;overflow:hidden;';");
@@ -3149,6 +3184,7 @@ THTTPStatus CWebDaemon::BuildMixerPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("document.getElementById('mx-enabled').value=d.enabled?'1':'0';");
 		html.Append("document.getElementById('mx-mt32v').value=Math.round(d.mt32_volume*100);");
 		html.Append("document.getElementById('mx-fluidv').value=Math.round(d.fluid_volume*100);");
+		html.Append("var opl3Vol=document.getElementById('mx-opl3v');if(opl3Vol)opl3Vol.value=Math.round((d.ymfm_volume||0)*100);");
 		html.Append("document.getElementById('mx-mt32p').value=Math.round(d.mt32_pan*100);");
 		html.Append("document.getElementById('mx-fluidp').value=Math.round(d.fluid_pan*100);");
 		html.Append("document.getElementById('mx-render').textContent=d.render_us;");
@@ -3314,6 +3350,8 @@ THTTPStatus CWebDaemon::BuildSoundPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("<script src='/app.js'></script>");
 
 		const bool bMT32Active = std::strcmp(m_pMT32Pi->GetActiveSynthName(), "MT-32") == 0;
+		const bool bYmfmActive = std::strcmp(m_pMT32Pi->GetActiveSynthName(), "OPL3") == 0;
+		const bool bSFActive   = !bMT32Active && !bYmfmActive;
 		const int nROMSetIndex = m_pMT32Pi->GetMT32ROMSetIndex();
 		const int nMasterVolume = m_pMT32Pi->GetMasterVolume();
 		const size_t nCurrentSoundFontIndex = m_pMT32Pi->GetCurrentSoundFontIndex();
@@ -3370,14 +3408,18 @@ THTTPStatus CWebDaemon::BuildSoundPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("<div class='tabbar'><button class='tabbtn");
 		html.Append(bMT32Active ? " active" : "");
 		html.Append("' type='button' id='tab-mt32'>MT-32</button><button class='tabbtn");
-		html.Append(!bMT32Active ? " active" : "");
-		html.Append("' type='button' id='tab-sf'>SoundFont</button></div>");
+		html.Append(bSFActive ? " active" : "");
+		html.Append("' type='button' id='tab-sf'>SoundFont</button><button class='tabbtn");
+		html.Append(bYmfmActive ? " active" : "");
+		html.Append("' type='button' id='tab-opl3'>OPL3</button></div>");
 		html.Append("<section><h2>Engine &amp; bank</h2><div class='grid'>");
 		html.Append("<label>Active synth<select id='rt_active_synth'><option value='mt32'");
 		html.Append(SelectedAttr(bMT32Active));
 		html.Append(">MT-32</option><option value='soundfont'");
-		html.Append(SelectedAttr(!bMT32Active));
-		html.Append(">SoundFont</option></select></label>");
+		html.Append(SelectedAttr(bSFActive));
+		html.Append(">SoundFont</option><option value='opl3'");
+		html.Append(SelectedAttr(bYmfmActive));
+		html.Append(">OPL3</option></select></label>");
 		html.Append("<label>Master volume <input id='rt_master_volume' type='range' min='0' max='100' step='1' value='");
 		AppendEscaped(html, MasterVolume);
 		html.Append("'><span id='rt_master_volume_val'>");
@@ -3554,14 +3596,22 @@ THTTPStatus CWebDaemon::BuildSoundPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("<label>Polyphony <input id='rt_sf_polyphony' type='number' min='1' max='512' value='200'></label>");
 		html.Append("<label>Channel types<div id='sf_chtypes' style='display:flex;gap:3px;flex-wrap:wrap;margin-top:4px;'></div></label>");
 		html.Append("</div><div id='rtStatus' style='margin-top:10px;color:#86efac;'></div></section>");
+
+		html.Append("<section id='opl3-section'><h2>OPL3/ymfm</h2><div class='grid'>");
+		html.Append("<label>Bank<input id='rt_opl3_bank' disabled placeholder='(none=built-in GM)'></label>");
+		html.Append("<label>Chip mode<input id='rt_opl3_chip' disabled></label>");
+		html.Append("</div></section>");
+
 		html.Append("<script>const rs=document.getElementById('rtStatus');"
 			"const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};"
 			"const setDisabled=(id,b)=>{const e=document.getElementById(id);if(e)e.disabled=!!b;};"
 			"const setSectionHidden=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('section-hidden',!!b);};"
 			"const setTabActive=(id,b)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',!!b);};");
-		html.Append("const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_gain_val',Number(j.sf_gain).toFixed(2));setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_reverb_damping_val',Number(j.sf_reverb_damping).toFixed(1));setText('rt_sf_reverb_width_val',Math.round(Number(j.sf_reverb_width)));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_sf_chorus_level_val',Number(j.sf_chorus_level).toFixed(2));setText('rt_sf_chorus_speed_val',Number(j.sf_chorus_speed).toFixed(2));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':'soundfont';const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const sfg=document.getElementById('rt_sf_gain');if(sfg)sfg.value=Number(j.sf_gain).toFixed(2);const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const rtd=document.getElementById('rt_sf_reverb_damping');if(rtd)rtd.value=Number(j.sf_reverb_damping).toFixed(1);const rtw=document.getElementById('rt_sf_reverb_width');if(rtw)rtw.value=Math.round(Number(j.sf_reverb_width));const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const ctl=document.getElementById('rt_sf_chorus_level');if(ctl)ctl.value=Number(j.sf_chorus_level).toFixed(2);const ctv=document.getElementById('rt_sf_chorus_voices');if(ctv)ctv.value=j.sf_chorus_voices;const cts=document.getElementById('rt_sf_chorus_speed');if(cts)cts.value=Number(j.sf_chorus_speed).toFixed(2);const sft=document.getElementById('rt_sf_tuning');if(sft)sft.value=j.sf_tuning;const sfp=document.getElementById('rt_sf_polyphony');if(sfp)sfp.value=j.sf_polyphony;if(j.sf_percussion_mask!==undefined){var cg=document.getElementById('sf_chtypes');if(cg){if(!cg.children.length){for(var ci=0;ci<16;ci++){var btn=document.createElement('button');btn.type='button';btn.id='sf_ch'+ci;btn.style.cssText='min-width:30px;padding:2px 4px;font-size:11px;border:1px solid #334155;border-radius:4px;cursor:pointer;';btn.dataset.ch=ci;btn.addEventListener('click',function(){var c=Number(this.dataset.ch);var cur=Number(this.dataset.drum);rtApply('sf_channel_type',c+','+(cur?0:1));});cg.appendChild(btn);}}for(var ci=0;ci<16;ci++){var b=document.getElementById('sf_ch'+ci);if(b){var isDrum=(j.sf_percussion_mask>>ci)&1;b.dataset.drum=isDrum;b.textContent=(ci+1)+(isDrum?'D':'M');b.style.background=isDrum?'#f59e0b':'#334155';b.style.color=isDrum?'#000':'#e2e8f0';b.disabled=!sf;}}}}const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_gain',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_reverb_damping',!sf);setDisabled('rt_sf_reverb_width',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setDisabled('rt_sf_chorus_level',!sf);setDisabled('rt_sf_chorus_voices',!sf);setDisabled('rt_sf_chorus_speed',!sf);setDisabled('rt_sf_tuning',!sf);setDisabled('rt_sf_polyphony',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);var dual=!!j.mixer_dual_mode;if(dual){document.querySelectorAll('#mt32-section input,#mt32-section select,#sf-section input,#sf-section select').forEach(function(e){e.disabled=false;});setSectionHidden('mt32-section',false);setSectionHidden('sf-section',false);setTabActive('tab-mt32',true);setTabActive('tab-sf',true);}var mxl=document.getElementById('rt_mixer_label');if(mxl){var pn=['All MT-32','All FluidSynth','Split GM','Custom'];if(j.mixer_enabled){mxl.textContent=pn[j.mixer_preset]||'On';mxl.style.color='#86efac';}else{mxl.textContent='OFF';mxl.style.color='#64748b';}}var mxb=document.getElementById('mx-banner');if(mxb)mxb.style.display=dual?'block':'none';};");
+		html.Append("const applyRuntimeState=(j)=>{const mt32=j.active_synth==='MT-32';const sf=j.active_synth==='SoundFont';const opl3=j.active_synth==='OPL3';setText('rt_active_synth_label',j.active_synth||'-');setText('rt_mt32_rom_name',j.mt32_rom_name||'-');setText('rt_soundfont_name',j.soundfont_name||'-');setText('rt_master_volume_val',j.master_volume);setText('rt_sf_gain_val',Number(j.sf_gain).toFixed(2));setText('rt_sf_reverb_room_val',Number(j.sf_reverb_room).toFixed(1));setText('rt_sf_reverb_level_val',Number(j.sf_reverb_level).toFixed(1));setText('rt_sf_reverb_damping_val',Number(j.sf_reverb_damping).toFixed(1));setText('rt_sf_reverb_width_val',Math.round(Number(j.sf_reverb_width)));setText('rt_sf_chorus_depth_val',Math.round(Number(j.sf_chorus_depth)));setText('rt_sf_chorus_level_val',Number(j.sf_chorus_level).toFixed(2));setText('rt_sf_chorus_speed_val',Number(j.sf_chorus_speed).toFixed(2));setText('rt_mt32_reverb_gain_val',Number(j.mt32_reverb_gain).toFixed(2));const synth=document.getElementById('rt_active_synth');if(synth)synth.value=mt32?'mt32':(sf?'soundfont':'opl3');const rom=document.getElementById('rt_mt32_rom_set');if(rom&&j.mt32_rom_set>=0)rom.value=j.mt32_rom_set===0?'mt32_old':(j.mt32_rom_set===1?'mt32_new':'cm32l');const sfSel=document.getElementById('rt_soundfont_index');if(sfSel&&j.soundfont_index>=0)sfSel.value=String(j.soundfont_index);const vol=document.getElementById('rt_master_volume');if(vol)vol.value=j.master_volume;const sfg=document.getElementById('rt_sf_gain');if(sfg)sfg.value=Number(j.sf_gain).toFixed(2);const rta=document.getElementById('rt_sf_reverb_active');if(rta)rta.value=j.sf_reverb_active?'on':'off';const rtr=document.getElementById('rt_sf_reverb_room');if(rtr)rtr.value=Number(j.sf_reverb_room).toFixed(1);const rtl=document.getElementById('rt_sf_reverb_level');if(rtl)rtl.value=Number(j.sf_reverb_level).toFixed(1);const rtd=document.getElementById('rt_sf_reverb_damping');if(rtd)rtd.value=Number(j.sf_reverb_damping).toFixed(1);const rtw=document.getElementById('rt_sf_reverb_width');if(rtw)rtw.value=Math.round(Number(j.sf_reverb_width));const cta=document.getElementById('rt_sf_chorus_active');if(cta)cta.value=j.sf_chorus_active?'on':'off';const ctd=document.getElementById('rt_sf_chorus_depth');if(ctd)ctd.value=Math.round(Number(j.sf_chorus_depth));const ctl=document.getElementById('rt_sf_chorus_level');if(ctl)ctl.value=Number(j.sf_chorus_level).toFixed(2);const ctv=document.getElementById('rt_sf_chorus_voices');if(ctv)ctv.value=j.sf_chorus_voices;const cts=document.getElementById('rt_sf_chorus_speed');if(cts)cts.value=Number(j.sf_chorus_speed).toFixed(2);const sft=document.getElementById('rt_sf_tuning');if(sft)sft.value=j.sf_tuning;const sfp=document.getElementById('rt_sf_polyphony');if(sfp)sfp.value=j.sf_polyphony;if(j.sf_percussion_mask!==undefined){var cg=document.getElementById('sf_chtypes');if(cg){if(!cg.children.length){for(var ci=0;ci<16;ci++){var btn=document.createElement('button');btn.type='button';btn.id='sf_ch'+ci;btn.style.cssText='min-width:30px;padding:2px 4px;font-size:11px;border:1px solid #334155;border-radius:4px;cursor:pointer;';btn.dataset.ch=ci;btn.addEventListener('click',function(){var c=Number(this.dataset.ch);var cur=Number(this.dataset.drum);rtApply('sf_channel_type',c+','+(cur?0:1));});cg.appendChild(btn);}}for(var ci=0;ci<16;ci++){var b=document.getElementById('sf_ch'+ci);if(b){var isDrum=(j.sf_percussion_mask>>ci)&1;b.dataset.drum=isDrum;b.textContent=(ci+1)+(isDrum?'D':'M');b.style.background=isDrum?'#f59e0b':'#334155';b.style.color=isDrum?'#000':'#e2e8f0';b.disabled=!sf;}}}}const m32rg=document.getElementById('rt_mt32_reverb_gain');if(m32rg)m32rg.value=Number(j.mt32_reverb_gain).toFixed(2);const m32ra=document.getElementById('rt_mt32_reverb_active');if(m32ra)m32ra.value=j.mt32_reverb_active?'on':'off';const m32na=document.getElementById('rt_mt32_nice_amp');if(m32na)m32na.value=j.mt32_nice_amp?'on':'off';const m32np=document.getElementById('rt_mt32_nice_pan');if(m32np)m32np.value=j.mt32_nice_pan?'on':'off';const m32nm=document.getElementById('rt_mt32_nice_mix');if(m32nm)m32nm.value=j.mt32_nice_mix?'on':'off';const m32dc=document.getElementById('rt_mt32_dac_mode');if(m32dc)m32dc.value=j.mt32_dac_mode;const m32md=document.getElementById('rt_mt32_midi_delay');if(m32md)m32md.value=j.mt32_midi_delay;const m32an=document.getElementById('rt_mt32_analog_mode');if(m32an)m32an.value=j.mt32_analog_mode;const m32rd=document.getElementById('rt_mt32_renderer_type');if(m32rd)m32rd.value=j.mt32_renderer_type;const m32pc=document.getElementById('rt_mt32_partial_count');if(m32pc)m32pc.value=j.mt32_partial_count;setDisabled('rt_mt32_rom_set',!mt32);setDisabled('rt_mt32_reverb_gain',!mt32);setDisabled('rt_mt32_reverb_active',!mt32);setDisabled('rt_mt32_nice_amp',!mt32);setDisabled('rt_mt32_nice_pan',!mt32);setDisabled('rt_mt32_nice_mix',!mt32);setDisabled('rt_mt32_dac_mode',!mt32);setDisabled('rt_mt32_midi_delay',!mt32);setDisabled('rt_mt32_analog_mode',!mt32);setDisabled('rt_mt32_renderer_type',!mt32);setDisabled('rt_mt32_partial_count',!mt32);setDisabled('rt_soundfont_index',!sf);setDisabled('rt_sf_gain',!sf);setDisabled('rt_sf_reverb_active',!sf);setDisabled('rt_sf_reverb_room',!sf);setDisabled('rt_sf_reverb_level',!sf);setDisabled('rt_sf_reverb_damping',!sf);setDisabled('rt_sf_reverb_width',!sf);setDisabled('rt_sf_chorus_active',!sf);setDisabled('rt_sf_chorus_depth',!sf);setDisabled('rt_sf_chorus_level',!sf);setDisabled('rt_sf_chorus_voices',!sf);setDisabled('rt_sf_chorus_speed',!sf);setDisabled('rt_sf_tuning',!sf);setDisabled('rt_sf_polyphony',!sf);setSectionHidden('mt32-section',!mt32);setSectionHidden('sf-section',!sf);setSectionHidden('opl3-section',!opl3);setTabActive('tab-mt32',mt32);setTabActive('tab-sf',sf);setTabActive('tab-opl3',opl3);const rtOpl3Bank=document.getElementById('rt_opl3_bank');if(rtOpl3Bank)rtOpl3Bank.value=j.ymfm_bank_name||'';const rtOpl3Chip=document.getElementById('rt_opl3_chip');if(rtOpl3Chip)rtOpl3Chip.value=j.ymfm_chip_is_opl3?'OPL3':'OPL2';var dual=!!j.mixer_dual_mode;if(dual){document.querySelectorAll('#mt32-section input,#mt32-section select,#sf-section input,#sf-section select,#opl3-section input,#opl3-section select').forEach(function(e){e.disabled=false;});setSectionHidden('mt32-section',false);setSectionHidden('sf-section',false);setSectionHidden('opl3-section',false);}var mxl=document.getElementById('rt_mixer_label');if(mxl){var pn=['Single MT-32','Single FluidSynth','Single OPL3','Split GM','Custom'];if(j.mixer_enabled){mxl.textContent=pn[j.mixer_preset]||'On';mxl.style.color='#86efac';}else{mxl.textContent='OFF';mxl.style.color='#64748b';}}var mxb=document.getElementById('mx-banner');if(mxb)mxb.style.display=dual?'block':'none';};");
 		html.Append("const rtRefresh=async()=>{try{const r=await fetch('/api/runtime/status',{cache:'no-store'});if(!r.ok)throw new Error('http');const j=await r.json();applyRuntimeState(j);}catch(err){if(rs)rs.textContent='Error reading runtime status';}};");
-		html.Append("const rtApply=async(param,value)=>{if(!rs)return;rs.textContent='Applying...';const body=new URLSearchParams({param,value:String(value)});try{const r=await fetch('/api/runtime/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();if(!r.ok||!j.ok){rs.textContent='Could not apply '+param;showToast('Error: '+param,false);return;}applyRuntimeState(j);rs.textContent='Applied: '+param;showToast('Applied: '+param);}catch(err){rs.textContent='Error applying '+param;showToast('Error',false);}};");
+		html.Append("const rtApply=async(param,value,bNotify=true)=>{if(!rs)return false;rs.textContent='Applying...';const body=new URLSearchParams({param,value:String(value)});try{const r=await fetch('/api/runtime/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const j=await r.json();if(!r.ok||!j.ok){rs.textContent='Could not apply '+param;if(bNotify)showToast('Error: '+param,false);return false;}try{applyRuntimeState(j);}catch(applyErr){rs.textContent='Applied: '+param+' (refreshing...)';}if(rs.textContent==='Applying...')rs.textContent='Applied: '+param;if(bNotify)showToast('Applied: '+param);return true;}catch(err){rs.textContent='Error applying '+param;if(bNotify)showToast('Error',false);return false;}};");
+		html.Append("const setActiveSynthUI=(value)=>{const synth=document.getElementById('rt_active_synth');if(synth)synth.value=value;setTabActive('tab-mt32',value==='mt32');setTabActive('tab-sf',value==='soundfont');setTabActive('tab-opl3',value==='opl3');};");
+		html.Append("const applyActiveSynth=async(value)=>{setActiveSynthUI(value);const ok=await rtApply('active_synth',value,false);await rtRefresh();const lbl=document.getElementById('rt_active_synth_label');const current=lbl?lbl.textContent:'';const applied=(value==='mt32'&&current==='MT-32')||(value==='soundfont'&&current==='SoundFont')||(value==='opl3'&&current==='OPL3');if(applied){if(rs)rs.textContent='Applied: active_synth';return true;}if(rs)rs.textContent='Could not apply active_synth';if(!ok)showToast('Error: active_synth',false);return false;};");
 		html.Append("const bindChange=(id,param)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('change',()=>rtApply(param,el.value));};const bindRange=(id,param,formatter)=>{const el=document.getElementById(id);if(!el)return;el.addEventListener('input',()=>{if(formatter)formatter(el.value);});el.addEventListener('change',()=>rtApply(param,el.value));};");
 		html.Append("const loadSFPreview=(idx)=>{const pv=document.getElementById('sf-preview');if(!pv)return;pv.style.display='none';if(idx<0)return;");
 		html.Append("_qs('/api/soundfont/info','index='+idx,function(j){if(!j)return;");
@@ -3579,8 +3629,8 @@ THTTPStatus CWebDaemon::BuildSoundPage(u8* pBuffer, unsigned* pLength, const cha
 		html.Append("const renderFavs=()=>{const favs=loadFavs();const wrap=document.getElementById('sf-favs-wrap');const cont=document.getElementById('sf-favs');if(!wrap||!cont)return;cont.innerHTML='';if(!favs.length){wrap.style.display='none';return;}wrap.style.display='';favs.forEach((f,fi)=>{const btn=document.createElement('button');btn.type='button';btn.title=f.path||f.name;btn.style.cssText='padding:3px 8px;font-size:12px;background:#1e293b;border:1px solid #334155;border-radius:5px;color:#7dd3fc;cursor:pointer;display:flex;align-items:center;gap:4px;';const star=document.createElement('span');star.textContent='\u2605';star.style.color='#facc15';btn.appendChild(star);btn.appendChild(document.createTextNode(f.name));btn.addEventListener('click',()=>{const sel=document.getElementById('rt_soundfont_index');if(!sel)return;for(let i=0;i<sel.options.length;i++){if(sel.options[i].textContent.trim()===f.name){sel.value=String(i);loadSFPreview(i);rtApply('soundfont_index',String(i));updateFavBtn();return;}}showToast('SoundFont not found: '+f.name,false);});const rm=document.createElement('button');rm.type='button';rm.title='Remove';rm.textContent='\u00d7';rm.style.cssText='margin-left:2px;background:none;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:0 2px;';rm.addEventListener('click',(e)=>{e.stopPropagation();const a=loadFavs();a.splice(fi,1);saveFavs(a);renderFavs();updateFavBtn();});btn.appendChild(rm);cont.appendChild(btn);});};");
 		html.Append("const sfFavBtn=document.getElementById('sf-fav-btn');if(sfFavBtn){sfFavBtn.addEventListener('click',()=>{const nm=currentSFName();if(!nm)return;const idx=currentSFIndex();let favs=loadFavs();const pos=favs.findIndex(f=>f.name===nm);if(pos>=0){favs.splice(pos,1);}else{_qs('/api/soundfont/info','index='+idx,function(j){favs.push({name:nm,path:j?j.path:''});saveFavs(favs);renderFavs();updateFavBtn();});return;}saveFavs(favs);renderFavs();updateFavBtn();});}");
 		html.Append("renderFavs();updateFavBtn();");
-		html.Append("const tabMT32=document.getElementById('tab-mt32');if(tabMT32)tabMT32.addEventListener('click',()=>rtApply('active_synth','mt32'));const tabSF=document.getElementById('tab-sf');if(tabSF)tabSF.addEventListener('click',()=>rtApply('active_synth','soundfont'));");
-		html.Append("bindChange('rt_active_synth','active_synth');bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');bindChange('rt_sf_chorus_voices','sf_chorus_voices');bindChange('rt_sf_tuning','sf_tuning');bindChange('rt_sf_polyphony','sf_polyphony');bindChange('rt_mt32_reverb_active','mt32_reverb_active');bindChange('rt_mt32_nice_amp','mt32_nice_amp');bindChange('rt_mt32_nice_pan','mt32_nice_pan');bindChange('rt_mt32_nice_mix','mt32_nice_mix');bindChange('rt_mt32_dac_mode','mt32_dac_mode');bindChange('rt_mt32_midi_delay','mt32_midi_delay');bindChange('rt_mt32_analog_mode','mt32_analog_mode');bindChange('rt_mt32_renderer_type','mt32_renderer_type');bindChange('rt_mt32_partial_count','mt32_partial_count');");
+		html.Append("const tabMT32=document.getElementById('tab-mt32');if(tabMT32)tabMT32.addEventListener('click',()=>applyActiveSynth('mt32'));const tabSF=document.getElementById('tab-sf');if(tabSF)tabSF.addEventListener('click',()=>applyActiveSynth('soundfont'));const tabOPL3=document.getElementById('tab-opl3');if(tabOPL3)tabOPL3.addEventListener('click',()=>applyActiveSynth('opl3'));const activeSynthSel=document.getElementById('rt_active_synth');if(activeSynthSel)activeSynthSel.addEventListener('change',()=>applyActiveSynth(activeSynthSel.value));");
+		html.Append("bindChange('rt_mt32_rom_set','mt32_rom_set');bindChange('rt_soundfont_index','soundfont_index');bindChange('rt_sf_reverb_active','sf_reverb_active');bindChange('rt_sf_chorus_active','sf_chorus_active');bindChange('rt_sf_chorus_voices','sf_chorus_voices');bindChange('rt_sf_tuning','sf_tuning');bindChange('rt_sf_polyphony','sf_polyphony');bindChange('rt_mt32_reverb_active','mt32_reverb_active');bindChange('rt_mt32_nice_amp','mt32_nice_amp');bindChange('rt_mt32_nice_pan','mt32_nice_pan');bindChange('rt_mt32_nice_mix','mt32_nice_mix');bindChange('rt_mt32_dac_mode','mt32_dac_mode');bindChange('rt_mt32_midi_delay','mt32_midi_delay');bindChange('rt_mt32_analog_mode','mt32_analog_mode');bindChange('rt_mt32_renderer_type','mt32_renderer_type');bindChange('rt_mt32_partial_count','mt32_partial_count');");
 		html.Append("bindRange('rt_master_volume','master_volume',(v)=>setText('rt_master_volume_val',v));bindRange('rt_sf_gain','sf_gain',(v)=>setText('rt_sf_gain_val',Number(v).toFixed(2)));bindRange('rt_sf_reverb_room','sf_reverb_room',(v)=>setText('rt_sf_reverb_room_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_level','sf_reverb_level',(v)=>setText('rt_sf_reverb_level_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_damping','sf_reverb_damping',(v)=>setText('rt_sf_reverb_damping_val',Number(v).toFixed(1)));bindRange('rt_sf_reverb_width','sf_reverb_width',(v)=>setText('rt_sf_reverb_width_val',Math.round(Number(v))));bindRange('rt_sf_chorus_depth','sf_chorus_depth',(v)=>setText('rt_sf_chorus_depth_val',Math.round(Number(v))));bindRange('rt_sf_chorus_level','sf_chorus_level',(v)=>setText('rt_sf_chorus_level_val',Number(v).toFixed(2)));bindRange('rt_sf_chorus_speed','sf_chorus_speed',(v)=>setText('rt_sf_chorus_speed_val',Number(v).toFixed(2)));bindRange('rt_mt32_reverb_gain','mt32_reverb_gain',(v)=>setText('rt_mt32_reverb_gain_val',Number(v).toFixed(2)));rtRefresh();setInterval(rtRefresh,3000);</script>");
 		html.Append("</main></body></html>");
 
@@ -3609,9 +3659,10 @@ THTTPStatus CWebDaemon::BuildConfigPage(u8* pBuffer, unsigned* pLength, const ch
 		CString SysI2CBaud; SysI2CBaud.Format("%d", pConfig->SystemI2CBaudRate);
 		CString SysPowerSave; SysPowerSave.Format("%d", pConfig->SystemPowerSaveTimeout);
 		html.Append("<section><h2>System</h2><div class='grid'>");
-		html.Append("<label>Default synth<small>mt32: MT-32 via Munt emulator; soundfont: FluidSynth. Falls back to first available synth if chosen one is unavailable.</small><select name='default_synth'>");
+		html.Append("<label>Default synth<small>mt32: MT-32 via Munt emulator; soundfont: FluidSynth; ymfm: OPL3/OPL2 chip emulation. Falls back to first available synth if chosen one is unavailable.</small><select name='default_synth'>");
 		html.Append("<option value='mt32'"); html.Append(SelectedAttr(pConfig->SystemDefaultSynth == CConfig::TSystemDefaultSynth::MT32)); html.Append(">MT-32</option>");
 		html.Append("<option value='soundfont'"); html.Append(SelectedAttr(pConfig->SystemDefaultSynth == CConfig::TSystemDefaultSynth::SoundFont)); html.Append(">SoundFont</option>");
+		html.Append("<option value='ymfm'"); html.Append(SelectedAttr(pConfig->SystemDefaultSynth == CConfig::TSystemDefaultSynth::Ymfm)); html.Append(">OPL3/ymfm</option>");
 		html.Append("</select></label>");
 		html.Append("<label>Verbose<small>on: more info on LCD at boot and on errors. May hide the boot logo on small displays.</small><select name='system_verbose'><option value='off'"); html.Append(SelectedAttr(!pConfig->SystemVerbose)); html.Append(">off</option><option value='on'"); html.Append(SelectedAttr(pConfig->SystemVerbose)); html.Append(">on</option></select></label>");
 		html.Append("<label>USB<small>on: enables USB support (MIDI, keyboards, etc.). Disable to speed up boot if USB is not needed.</small><select name='system_usb'><option value='on'"); html.Append(SelectedAttr(pConfig->SystemUSB)); html.Append(">on</option><option value='off'"); html.Append(SelectedAttr(!pConfig->SystemUSB)); html.Append(">off</option></select></label>");
@@ -3713,6 +3764,15 @@ THTTPStatus CWebDaemon::BuildConfigPage(u8* pBuffer, unsigned* pLength, const ch
 		html.Append("<label>Chorus level<small>Mix level. Typical values: 0.0-10.0</small><input name='fs_chorus_level' type='number' step='0.01' min='0' value='"); AppendEscaped(html, FSChrLevel); html.Append("'></label>");
 		html.Append("<label>Chorus voices<small>Number of modulator voices. Typical values: 1-99</small><input name='fs_chorus_voices' type='number' min='0' value='"); AppendEscaped(html, FSChrVoices); html.Append("'></label>");
 		html.Append("<label>Chorus speed<small>Modulation speed in Hz. Range: 0.29-5.0</small><input name='fs_chorus_speed' type='number' step='0.01' min='0' value='"); AppendEscaped(html, FSChrSpeed); html.Append("'></label>");
+		html.Append("</div></section>");
+
+		// ---- [ymfm] ----
+		html.Append("<section><h2>OPL3/ymfm (defaults)</h2><div class='grid'>");
+		html.Append("<label>Chip mode<small>opl3: 18-voice stereo OPL3; opl2: 9-voice mono OPL2 (backward compat)</small><select name='ymfm_chip'>");
+		html.Append("<option value='opl3'"); html.Append(SelectedAttr(pConfig->YmfmChip == CConfig::TYmfmChip::OPL3)); html.Append(">opl3</option>");
+		html.Append("<option value='opl2'"); html.Append(SelectedAttr(pConfig->YmfmChip == CConfig::TYmfmChip::OPL2)); html.Append(">opl2</option>");
+		html.Append("</select></label>");
+		html.Append("<label>Bank file<small>Path to .wopl or .op2 bank file relative to SD root. Empty = built-in GM patches.</small><input name='ymfm_bank_file' value='"); AppendEscaped(html, pConfig->YmfmBankFile); html.Append("'></label>");
 		html.Append("</div></section>");
 
 		// ---- [lcd] ----
@@ -3890,11 +3950,22 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	AppendRow(html, "Chorus", BoolText(pConfig->FluidSynthDefaultChorusActive));
 	AppendSectionEnd(html);
 
+	{
+		const CMT32Pi::TSystemState st = m_pMT32Pi->GetSystemState();
+		AppendSectionStart(html, "OPL3 / ymfm");
+		AppendRow(html, "Available", BoolText(st.bYmfmAvailable));
+		AppendRow(html, "Current bank", st.pYmfmBankName ? st.pYmfmBankName : "");
+		AppendRow(html, "Chip mode", st.bYmfmChipIsOPL3 ? "OPL3" : "OPL2");
+		AppendRow(html, "Configured bank", pConfig->YmfmBankFile);
+		AppendRow(html, "Configured chip", pConfig->YmfmChip == CConfig::TYmfmChip::OPL3 ? "OPL3" : "OPL2");
+		AppendSectionEnd(html);
+	}
+
 	// Mixer status section
 	{
 		const CMT32Pi::TMixerStatus ms = m_pMT32Pi->GetMixerStatus();
-		static const char* PresetNames[] = {"All MT-32", "All FluidSynth", "Split GM", "Custom"};
-		const char* pPresetName = (ms.nPreset >= 0 && ms.nPreset <= 3) ? PresetNames[ms.nPreset] : "Unknown";
+		static const char* PresetNames[] = {"Single MT-32", "Single FluidSynth", "Single OPL3", "Split GM", "Custom"};
+		const char* pPresetName = (ms.nPreset >= 0 && ms.nPreset <= 4) ? PresetNames[ms.nPreset] : "Unknown";
 		html.Append("<section><h2>Mixer <a href='/mixer' style='font-size:13px;font-weight:normal;margin-left:8px;'>&#8594; Go</a></h2><table>");
 		AppendRow(html, "Enabled", BoolText(ms.bEnabled));
 		AppendRow(html, "Preset", pPresetName);
@@ -3920,6 +3991,7 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	html.Append("<tr><th>CPU load</th><td id='idx-prof-cpu'>0%</td></tr>");
 	html.Append("<tr><th>MT-32</th><td id='idx-prof-mt32'>0 us (0%)</td></tr>");
 	html.Append("<tr><th>FluidSynth</th><td id='idx-prof-fluid'>0 us (0%)</td></tr>");
+	html.Append("<tr><th>OPL3</th><td id='idx-prof-opl3'>0 us (0%)</td></tr>");
 	html.Append("<tr><th>Mixer</th><td id='idx-prof-mixer'>0 us (0%)</td></tr>");
 	html.Append("</table></section>");
 
@@ -3948,8 +4020,8 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	html.Append("const _prCtx=_prCanvas?_prCanvas.getContext('2d'):null;");
 	// Source colors: 0=off, 1=physical(green), 2=player(blue), 3=webui(orange)
 	html.Append("const SRC_COLORS=['','#4ade80','#60a5fa','#fb923c'];");
-	// Engine colors: 0=MT-32(cyan), 1=FluidSynth(magenta)
-	html.Append("const ENG_COLORS=['#22d3ee','#c084fc'];");
+	// Engine colors: 0=MT-32(cyan), 1=FluidSynth(magenta), 2=OPL3(amber)
+	html.Append("const ENG_COLORS=['#22d3ee','#c084fc','#f59e0b'];");
 	html.Append("var _chEng=new Array(16).fill(0);var _isMixer=false;");
 	// WHITE_ST: semitone offsets for the 7 white keys in an octave
 	// BLACK_ST: semitone offsets + fractional x position (0-7 white-key units) for 5 black keys
@@ -3983,8 +4055,8 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	html.Append("_resizeCanvases();window.addEventListener('resize',_resizeCanvases);");
 	html.Append("requestAnimationFrame(_rf);");
 	html.Append("function applyWS(d){");
-	html.Append("if(d.channels){var _pn=['All MT-32','All Fluid','Split GM','Custom'];st.textContent='Synth: '+(d.synth||'?')+(d.mixer?' ['+(_pn[d.preset]||'Mixer')+']':'')+' | WS';for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_lt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_pt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));if(ch.eng!==undefined)_chEng[ch.ch]=ch.eng;}if(d.mixer!==undefined)_isMixer=d.mixer;");
-	html.Append("var EN=['M','F'];for(var i=0;i<16;i++){var lb=document.getElementById('mlbl-'+(i+1));if(lb){var tag=_isMixer?' '+EN[_chEng[i]]:'';lb.textContent='CH'+String(i+1).padStart(2,'0')+tag;lb.style.color=_isMixer?ENG_COLORS[_chEng[i]]:'#93c5fd';}}}");
+	html.Append("if(d.channels){var _pn=['Single MT-32','Single Fluid','Single OPL3','Split GM','Custom'];st.textContent='Synth: '+(d.synth||'?')+(d.mixer?' ['+(_pn[d.preset]||'Mixer')+']':'')+' | WS';for(var i=0;i<d.channels.length;i++){var ch=d.channels[i];_lt[ch.ch]=Math.max(0,Math.min(1,ch.lv||0));_pt[ch.ch]=Math.max(0,Math.min(1,ch.pk||0));if(ch.eng!==undefined)_chEng[ch.ch]=ch.eng;}if(d.mixer!==undefined)_isMixer=d.mixer;");
+	html.Append("var EN=['M','F','O'];for(var i=0;i<16;i++){var lb=document.getElementById('mlbl-'+(i+1));if(lb){var tag=_isMixer?' '+(EN[_chEng[i]]||'?'):'';lb.textContent='CH'+String(i+1).padStart(2,'0')+tag;lb.style.color=_isMixer?(ENG_COLORS[_chEng[i]]||'#93c5fd'):'#93c5fd';}}}");
 	html.Append("if(d.notes){for(var ch=0;ch<16;ch++){_notes[ch].fill(0);if(d.notes[ch])for(var j=0;j<d.notes[ch].length;j++){const n=d.notes[ch][j];_notes[ch][n]=1;src_arr[ch][n]=(d.src&&d.src[ch])||1;}}");
 	html.Append("_prCol=(_prCol+1)%PR_COLS;_prBuf.fill(0,_prCol*PR_ROWS,(_prCol+1)*PR_ROWS);");
 	html.Append("for(var ch=0;ch<16;ch++){if(d.notes[ch])for(var j=0;j<d.notes[ch].length;j++){const n=d.notes[ch][j];_prBuf[_prCol*PR_ROWS+n]=_isMixer?(_chEng[ch]+1):Math.max(_prBuf[_prCol*PR_ROWS+n],(d.src&&d.src[ch])||1);}}}");
@@ -3995,9 +4067,9 @@ THTTPStatus CWebDaemon::BuildStatusPage(u8* pBuffer, unsigned* pLength, const ch
 	html.Append("if(ppb){ppb.textContent=st2==='playing'?'\\u23F8 Pause':(st2==='paused'?'\\u25B6 Resume':'\\u25B6 Play');}");
 	html.Append("if(stb)stb.style.display=(st2==='playing'||st2==='paused')?'':'none';}");
 	html.Append("var sf=document.getElementById('idx-seq-file');if(sf)sf.textContent=(d.file||'').replace(/^(SD:|USB:)/,'')||'\\u2014';");
-	html.Append("var pt=document.getElementById('idx-prof-total'),pa=document.getElementById('idx-prof-avg'),pd=document.getElementById('idx-prof-deadline'),pc=document.getElementById('idx-prof-cpu'),pm=document.getElementById('idx-prof-mt32'),pf=document.getElementById('idx-prof-fluid'),px=document.getElementById('idx-prof-mixer');");
+	html.Append("var pt=document.getElementById('idx-prof-total'),pa=document.getElementById('idx-prof-avg'),pd=document.getElementById('idx-prof-deadline'),pc=document.getElementById('idx-prof-cpu'),pm=document.getElementById('idx-prof-mt32'),pf=document.getElementById('idx-prof-fluid'),po=document.getElementById('idx-prof-opl3'),px=document.getElementById('idx-prof-mixer');");
 	html.Append("if(pt)pt.textContent=(d.render_us||0)+' us';if(pa)pa.textContent=(d.render_avg_us||0)+' us';if(pd)pd.textContent=((d.deadline_us!==undefined?d.deadline_us:0))+' us';if(pc)pc.textContent=((d.cpu_load!==undefined?d.cpu_load:0))+'%';");
-	html.Append("if(pm)pm.textContent=(d.mt32_render_us||0)+' us ('+((d.mt32_cpu!==undefined?d.mt32_cpu:0))+'%)';if(pf)pf.textContent=(d.fluid_render_us||0)+' us ('+((d.fluid_cpu!==undefined?d.fluid_cpu:0))+'%)';if(px)px.textContent=(d.mixer_render_us||0)+' us ('+((d.mixer_cpu!==undefined?d.mixer_cpu:0))+'%)';");
+	html.Append("if(pm)pm.textContent=(d.mt32_render_us||0)+' us ('+((d.mt32_cpu!==undefined?d.mt32_cpu:0))+'%)';if(pf)pf.textContent=(d.fluid_render_us||0)+' us ('+((d.fluid_cpu!==undefined?d.fluid_cpu:0))+'%)';if(po)po.textContent=(d.ymfm_render_us||0)+' us ('+((d.ymfm_cpu!==undefined?d.ymfm_cpu:0))+'%)';if(px)px.textContent=(d.mixer_render_us||0)+' us ('+((d.mixer_cpu!==undefined?d.mixer_cpu:0))+'%)';");
 	// Recorder badge + button
 	html.Append("var rb=document.getElementById('idx-rec-btn'),rbg=document.getElementById('idx-rec-badge');");
 	html.Append("if(rb){var rec=!!d.recording;rb.textContent=rec?'\\u23F9 Stop Recording':'\\u23FA Start Recording';rb.className=rec?'danger':'primary';}");

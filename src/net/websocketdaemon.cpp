@@ -147,11 +147,15 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 
 	if (n <= 0 || (size_t)n >= bufSize) return -1;
 
-	// eng: 0=MT-32, 1=FluidSynth (derived from engine name string)
+	// eng: 0=MT-32, 1=FluidSynth, 2=OPL3 (derived from engine name string)
 	for (int i = 0; i < 16; i++)
 	{
 		const char* pEng = st.Mixer.pChannelEngine[i];
-		int nEng = (pEng && pEng[0] == 'F') ? 1 : 0;  // "FluidSynth" vs "MT-32"
+		int nEng = 0;
+		if (pEng && pEng[0] == 'F')
+			nEng = 1;
+		else if (pEng && pEng[0] == 'O')
+			nEng = 2;
 		int added = snprintf(buf + n, bufSize - n,
 			"%s{\"ch\":%d,\"lv\":%.3f,\"pk\":%.3f,\"eng\":%d}",
 			i > 0 ? "," : "", i,
@@ -212,13 +216,13 @@ static int BuildStatusJSON(char* buf, size_t bufSize, CMT32Pi* pPi)
 	{
 		int added = snprintf(buf + n, bufSize - n,
 			"],\"render_us\":%u,\"render_avg_us\":%u,\"deadline_us\":%u,\"cpu_load\":%u"
-			",\"mt32_render_us\":%u,\"fluid_render_us\":%u,\"mixer_render_us\":%u"
-			",\"mt32_cpu\":%u,\"fluid_cpu\":%u,\"mixer_cpu\":%u"
+			",\"mt32_render_us\":%u,\"fluid_render_us\":%u,\"ymfm_render_us\":%u,\"mixer_render_us\":%u"
+			",\"mt32_cpu\":%u,\"fluid_cpu\":%u,\"ymfm_cpu\":%u,\"mixer_cpu\":%u"
 			",\"recording\":%s"
 			",\"pl_count\":%u,\"pl_idx\":%u,\"pl_repeat\":%s,\"pl_shuffle\":%s}",
 			st.Mixer.nRenderUs, st.Mixer.nRenderAvgUs, st.Mixer.nDeadlineUs, st.Mixer.nCpuLoadPercent,
-			st.Mixer.nMT32RenderUs, st.Mixer.nFluidRenderUs, st.Mixer.nMixerRenderUs,
-			st.Mixer.nMT32LoadPercent, st.Mixer.nFluidLoadPercent, st.Mixer.nMixerLoadPercent,
+			st.Mixer.nMT32RenderUs, st.Mixer.nFluidRenderUs, st.Mixer.nYmfmRenderUs, st.Mixer.nMixerRenderUs,
+			st.Mixer.nMT32LoadPercent, st.Mixer.nFluidLoadPercent, st.Mixer.nYmfmLoadPercent, st.Mixer.nMixerLoadPercent,
 			st.bMidiRecording ? "true" : "false",
 			st.nPlaylistCount, st.nPlaylistIndex,
 			st.bPlaylistRepeat  ? "true" : "false",

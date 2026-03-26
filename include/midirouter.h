@@ -38,6 +38,7 @@ enum class TRouterPreset
 {
 	SingleMT32,       // All 16 channels → MT-32
 	SingleFluid,      // All 16 channels → FluidSynth
+	SingleYmfm,       // All 16 channels → OPL3
 	SplitGM,          // Channels 1-9 → MT-32, 10-16 → FluidSynth
 	Custom            // User-defined per-channel mapping
 };
@@ -58,6 +59,7 @@ public:
 	// Register synth engines (call during init, before routing)
 	void SetMT32Engine(CSynthBase* pEngine)       { m_pMT32 = pEngine; }
 	void SetFluidSynthEngine(CSynthBase* pEngine)  { m_pFluidSynth = pEngine; }
+	void SetYmfmEngine(CSynthBase* pEngine)        { m_pYmfm = pEngine; }
 
 	// Channel mapping — which engine receives each channel
 	void SetChannelEngine(u8 nChannel, CSynthBase* pEngine);
@@ -116,6 +118,7 @@ private:
 	float        m_fChannelVolume[NumChannels];   // CC7 scaling factor per channel (1.0 = full)
 	CSynthBase*  m_pMT32;
 	CSynthBase*  m_pFluidSynth;
+	CSynthBase*  m_pYmfm;
 };
 
 #endif

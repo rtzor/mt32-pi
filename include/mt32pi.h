@@ -74,6 +74,7 @@
 #include "synth/mt32synth.h"
 #include "synth/soundfontsynth.h"
 #include "synth/synth.h"
+#include "synth/ymfmsynth.h"
 
 //#define MONITOR_TEMPERATURE
 
@@ -158,6 +159,7 @@ public:
 	void RequestReboot() { m_bRunning = false; }
 	bool HasMT32Synth() const { return m_pMT32Synth != nullptr; }
 	bool HasSoundFontSynth() const { return m_pSoundFontSynth != nullptr; }
+	bool HasYmfmSynth() const { return m_pYmfmSynth != nullptr; }
 
 	// ---- Mixer control (called from web handler on Core 0) ----
 	struct TMixerStatus
@@ -167,6 +169,7 @@ public:
 		bool  bDualMode;
 		float fMT32Volume;
 		float fFluidVolume;
+		float fYmfmVolume;
 		float fMT32Pan;
 		float fFluidPan;
 		float fMasterVolume;
@@ -187,7 +190,9 @@ public:
 		unsigned nMixerRenderUs; // mixer/gain/clamp overhead for the last chunk
 		unsigned nMT32LoadPercent;
 		unsigned nFluidLoadPercent;
+		unsigned nYmfmLoadPercent;
 		unsigned nMixerLoadPercent;
+		unsigned nYmfmRenderUs;
 		// Post-mix audio effects state
 		bool bEffectsEQEnabled;
 		bool bEffectsLimiterEnabled;
@@ -354,6 +359,11 @@ public:
 		float MIDILevels[16];
 		float MIDIPeaks[16];
 
+		// ymfm OPL3 state
+		bool        bYmfmAvailable;
+		const char* pYmfmBankName;
+		bool        bYmfmChipIsOPL3;
+
 		// Recorder state
 		bool bMidiRecording;
 
@@ -405,6 +415,7 @@ private:
 	bool InitNetwork();
 	bool InitMT32Synth();
 	bool InitSoundFontSynth();
+	bool InitYmfmSynth();
 
 	// Tasks for specific CPU cores
 	void MainTask();
@@ -512,6 +523,7 @@ private:
 	CSynthBase* m_pCurrentSynth;
 	CMT32Synth* m_pMT32Synth;
 	CSoundFontSynth* m_pSoundFontSynth;
+	CYmfmSynth* m_pYmfmSynth;
 
 	// MIDI Router + Audio Mixer + Effects
 	CMIDIRouter   m_MIDIRouter;
@@ -526,6 +538,7 @@ private:
 	volatile unsigned m_nDeadlineUs;         // deadline for current chunk size
 	volatile unsigned m_nRenderMT32Us;       // MT-32 render time for last chunk
 	volatile unsigned m_nRenderFluidUs;      // FluidSynth render time for last chunk
+	volatile unsigned m_nRenderYmfmUs;       // OPL3 render time for last chunk
 	volatile unsigned m_nRenderMixerUs;      // mixer overhead for last chunk
 	bool m_bAutoReducePartials;              // auto-reduce MT-32 partials if overloaded
 

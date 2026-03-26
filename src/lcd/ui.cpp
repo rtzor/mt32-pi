@@ -47,6 +47,7 @@ CUserInterface::CUserInterface()
 m_SysExPixelBuffer{0},
           m_pMenuSF(nullptr),
           m_pMenuMT32(nullptr),
+          m_pMenuYmfm(nullptr),
           m_pMenuCurrentSynth(nullptr),
           m_nMenuCursor(0),
           m_nMenuScroll(0),
@@ -75,7 +76,8 @@ m_SysExPixelBuffer{0},
 		  m_nMenuMT32MIDIDelay(0),
 		  m_nMenuMT32AnalogMode(1),
 		  m_nMenuMT32RendererType(0),
-		  m_nMenuMT32PartialCount(32)
+		  m_nMenuMT32PartialCount(32),
+		  m_nMenuYmfmVol(100)
 {
 }
 
