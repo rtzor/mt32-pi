@@ -32,7 +32,7 @@
 
 LOGMODULE("zoneallocator");
 
-constexpr size_t MallocHeapSize = 32 * MEGABYTE;
+constexpr size_t MallocHeapSize = 256 * MEGABYTE;
 
 CZoneAllocator* CZoneAllocator::s_pThis = nullptr;
 

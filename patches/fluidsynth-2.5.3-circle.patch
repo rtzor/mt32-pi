@@ -16,10 +16,19 @@ index eb7b04b6..076a89b9 100644
  set ( LIBFLUID_LIBS ${MATH_LIBRARY} )
  if (NOT ((CMAKE_SYSTEM_NAME MATCHES "SunOS") OR (osal STREQUAL "embedded")))
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 388e8484..7a937382 100644
+index 388e8484..ad9ca67c 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -146,6 +146,7 @@ set ( libfluidsynth_SOURCES
+@@ -97,6 +97,8 @@ if ( AUFILE_SUPPORT )
+   set ( fluid_aufile_SOURCES drivers/fluid_aufile.c )
+ endif ( AUFILE_SUPPORT )
+ 
++# force-enable native DLS for baremetal build (no external deps required)
++set ( ENABLE_NATIVE_DLS 1 )
+ if ( ENABLE_NATIVE_DLS )
+   set ( fluid_dls_SOURCES sfloader/fluid_dls.cpp sfloader/fluid_dls.h )
+ endif ( ENABLE_NATIVE_DLS )
+@@ -146,6 +148,7 @@ set ( libfluidsynth_SOURCES
      sfloader/fluid_sffile.h
      sfloader/fluid_samplecache.c
      sfloader/fluid_samplecache.h
@@ -27,7 +36,7 @@ index 388e8484..7a937382 100644
      rvoice/fluid_adsr_env.c
      rvoice/fluid_adsr_env.h
      rvoice/fluid_chorus.c
-@@ -182,21 +183,21 @@ set ( libfluidsynth_SOURCES
+@@ -182,21 +185,21 @@ set ( libfluidsynth_SOURCES
      synth/fluid_voice.h
      midi/fluid_midi.c
      midi/fluid_midi.h
@@ -64,12 +73,15 @@ index 388e8484..7a937382 100644
  )
  
  set ( fluid_osal_SOURCES utils/fluid_sys_${osal}.h )
-@@ -407,6 +408,11 @@ if ( TARGET SndFile::sndfile AND LIBSNDFILE_SUPPORT )
+@@ -407,6 +410,14 @@ if ( TARGET SndFile::sndfile AND LIBSNDFILE_SUPPORT )
      target_link_libraries ( libfluidsynth-OBJ PUBLIC SndFile::sndfile )
  endif()
  
 +# stb_vorbis: single-file Ogg Vorbis decoder for SF3 support (baremetal build)
 +target_compile_definitions ( libfluidsynth-OBJ PRIVATE STB_VORBIS_SUPPORT=1 )
++
++# native DLS support: baremetal build, no external deps
++target_compile_definitions ( libfluidsynth-OBJ PRIVATE ENABLE_NATIVE_DLS=1 )
 +set_source_files_properties ( sfloader/stb_vorbis_impl.c PROPERTIES
 +    COMPILE_DEFINITIONS "STB_VORBIS_NO_STDIO=1" )
 +

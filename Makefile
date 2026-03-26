@@ -65,8 +65,7 @@ endif
 	@echo "DEFINE += -DEXCLUDE_USB_MOUSE" >> $(CIRCLE_CONFIG)
 	@echo "DEFINE += -DEXCLUDE_USB_GAMEPAD" >> $(CIRCLE_CONFIG)
 	@echo "DEFINE += -DEXCLUDE_USB_PRINTER" >> $(CIRCLE_CONFIG)
-# Increase kernel max size to 4MB (stb_vorbis adds ~72KB, exceeding the 2MB default)
-        @echo "DEFINE += -DKERNEL_MAX_SIZE=\"(4*MEGABYTE)\"" >> $(CIRCLE_CONFIG)
+	@echo "DEFINE += -DKERNEL_MAX_SIZE=\"(4*MEGABYTE)\"" >> $(CIRCLE_CONFIG)
 #
 # Build circle-stdlib
 #
@@ -122,7 +121,9 @@ $(FLUIDSYNTHBUILDDIR)/.done: $(CIRCLESTDLIBHOME)/.done
 		 -Denable-libinstpatch=OFF \
 		 -Denable-libsndfile=OFF \
 		 -Denable-midishare=OFF \
-		 -Denable-native-dls=OFF \
+		 -Denable-native-dls=ON \
+		 -DCMAKE_CXX_STANDARD=17 \
+		 -DCMAKE_CXX_STANDARD_REQUIRED=ON \
 		 -Denable-network=OFF \
 		 -Denable-oboe=OFF \
 		 -Denable-openmp=OFF \

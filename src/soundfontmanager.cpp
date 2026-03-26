@@ -40,6 +40,7 @@ constexpr u32 FourCC(const char pFourCC[4])
 	return pFourCC[3] << 24 | pFourCC[2] << 16 | pFourCC[1] << 8 | pFourCC[0];
 }
 
+constexpr u32 FourCCDLS  = FourCC("DLS ");
 constexpr u32 FourCCINAM = FourCC("INAM");
 constexpr u32 FourCCINFO = FourCC("INFO");
 constexpr u32 FourCCLIST = FourCC("LIST");
@@ -186,7 +187,6 @@ void CSoundFontManager::CheckSoundFont(const char* pFullPath, const char* pFileN
 	UINT nBytesRead;
 	TSoundFontChunk Chunk;
 	u32 nFourCC;
-	u32 nInfoListChunkSize;
 	char Name[MaxSoundFontNameLength];
 
 	// Init with null terminator
@@ -196,51 +196,61 @@ void CSoundFontManager::CheckSoundFont(const char* pFullPath, const char* pFileN
 	if (f_open(&File, pFullPath, FA_READ) != FR_OK)
 		return;
 
-#define CHECK_CHUNK_ID(EXPECTED_CHUNK_ID)                                                                \
-	if (f_read(&File, &Chunk, sizeof(Chunk), &nBytesRead) != FR_OK || Chunk.FourCC != EXPECTED_CHUNK_ID) \
-	{                                                                                                    \
-		f_close(&File);                                                                                  \
-		return;                                                                                          \
-	}
-
-#define CHECK_FORM_ID(EXPECTED_FORM_ID)                                                                \
-	if (f_read(&File, &nFourCC, sizeof(nFourCC), &nBytesRead) != FR_OK || nFourCC != EXPECTED_FORM_ID) \
-	{                                                                                                  \
-		f_close(&File);                                                                                \
-		return;                                                                                        \
-	}
-
-	CHECK_CHUNK_ID(FourCCRIFF);
-	CHECK_FORM_ID(FourCCSFBK);
-	CHECK_CHUNK_ID(FourCCLIST);
-	CHECK_FORM_ID(FourCCINFO);
-
-	#undef CHECK_CHUNK_ID
-	#undef CHECK_FORM_ID
-
-	// Loop over info list chunks and look for name chunk
-	nInfoListChunkSize = Chunk.Size;
-	size_t nTotalBytesRead = 4;
-
-	while (nTotalBytesRead < nInfoListChunkSize && f_read(&File, &Chunk, sizeof(Chunk), &nBytesRead) == FR_OK)
+	// Must start with RIFF chunk
+	if (f_read(&File, &Chunk, sizeof(Chunk), &nBytesRead) != FR_OK || Chunk.FourCC != FourCCRIFF)
 	{
-		nTotalBytesRead += nBytesRead;
+		f_close(&File);
+		return;
+	}
 
-		// Extract name
-		if (Chunk.FourCC == FourCCINAM)
+	// Read RIFF form ID (sfbk = SF2/SF3, DLS  = DLS)
+	if (f_read(&File, &nFourCC, sizeof(nFourCC), &nBytesRead) != FR_OK)
+	{
+		f_close(&File);
+		return;
+	}
+
+	if (nFourCC == FourCCSFBK)
+	{
+		// SF2/SF3: expect LIST/INFO immediately, scan for INAM
+		if (f_read(&File, &Chunk, sizeof(Chunk), &nBytesRead) != FR_OK || Chunk.FourCC != FourCCLIST)
 		{
-			if (Chunk.Size <= sizeof(Name))
-				f_read(&File, Name, Chunk.Size, &nBytesRead);
-
-			break;
+			f_close(&File);
+			return;
 		}
 
-		// Skip to start of next chunk
-		else
-			f_lseek(&File, f_tell(&File) + Chunk.Size);
+		if (f_read(&File, &nFourCC, sizeof(nFourCC), &nBytesRead) != FR_OK || nFourCC != FourCCINFO)
+		{
+			f_close(&File);
+			return;
+		}
 
-		nTotalBytesRead += Chunk.Size;
+		u32 nInfoListChunkSize = Chunk.Size;
+		size_t nTotalBytesRead = 4;
+
+		while (nTotalBytesRead < nInfoListChunkSize && f_read(&File, &Chunk, sizeof(Chunk), &nBytesRead) == FR_OK)
+		{
+			nTotalBytesRead += nBytesRead;
+
+			if (Chunk.FourCC == FourCCINAM)
+			{
+				if (Chunk.Size <= sizeof(Name))
+					f_read(&File, Name, Chunk.Size, &nBytesRead);
+				break;
+			}
+			else
+				f_lseek(&File, f_tell(&File) + Chunk.Size);
+
+			nTotalBytesRead += Chunk.Size;
+		}
 	}
+	else if (nFourCC != FourCCDLS)
+	{
+		// Unknown form ID — not a supported file
+		f_close(&File);
+		return;
+	}
+	// DLS: validated by RIFF + DLS  magic; use filename as name
 
 	// Clean up
 	f_close(&File);
