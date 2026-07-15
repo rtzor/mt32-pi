@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Updated libmt32emu (Munt) to commit `6e7c01f`.
+- Updated FluidSynth to v2.5.6.
+
+### Fixed
+
+- Incorporated FluidSynth upstream hardening for malformed MIDI, DLS, and SoundFont input.
+
 ## [0.13.1] - 2023-03-18
 
 ### Changed

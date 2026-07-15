@@ -2,7 +2,7 @@
 boot_delay=0
 disable_splash=1
 force_eeprom_read=0
-gpu_mem=16
+gpu_mem=32
 disable_overscan=1
 initial_turbo=0
 
@@ -31,11 +31,13 @@ kernel=kernel8.img
 arm_64bit=1
 kernel_address=0x80000
 kernel=kernel8.img
+max_framebuffers=2
 
 [pi3+]
 arm_64bit=1
 kernel_address=0x80000
 kernel=kernel8.img
+max_framebuffers=2
 
 [pi4]
 arm_64bit=1
@@ -50,3 +52,9 @@ arm_freq_min=100
 gpu_freq=100
 over_voltage=-16
 over_voltage_min=-16
+
+[pi5]
+arm_64bit=1
+kernel_address=0x80000
+kernel=kernel_2712.img
+max_framebuffers=2

@@ -8,6 +8,8 @@ name: mt32-pi nightly
 #      system rot and measure true cold-compile time.
 
 on:
+  schedule:
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 env:
@@ -26,14 +28,14 @@ jobs:
       - name: Initialise submodules (unpatched)
         run: git submodule update --init --recursive
 
-      - name: fluidsynth-2.5.3-circle.patch — dry-run
+      - name: fluidsynth-2.5.5-circle.patch — dry-run
         run: |
           if patch --dry-run --forward --strip 1 \
                --directory external/fluidsynth \
-               < patches/fluidsynth-2.5.3-circle.patch; then
-            echo "✅ fluidsynth-2.5.3-circle.patch applies cleanly"
+               < patches/fluidsynth-2.5.5-circle.patch; then
+            echo "✅ fluidsynth-2.5.5-circle.patch applies cleanly"
           else
-            echo "::error::fluidsynth-2.5.3-circle.patch does not apply cleanly to pinned submodule"
+            echo "::error::fluidsynth-2.5.5-circle.patch does not apply cleanly to pinned submodule"
             exit 1
           fi
 
@@ -41,6 +43,7 @@ jobs:
         run: |
           CIRCLEHOME=external/circle-stdlib/libs/circle
           for p in \
+            patches/circle-50-httpdaemon-keepalive.patch \
             patches/circle-50-minimal-usb-drivers.patch \
             patches/circle-50-cp210x-remove-partnum-check.patch; do
             if patch --dry-run --forward --strip 1 \

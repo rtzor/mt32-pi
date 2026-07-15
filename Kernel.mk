@@ -27,6 +27,7 @@ OBJS		:=	src/config.o \
 			src/playlist.o \
 			src/audiomixer.o \
 			src/audioeffects.o \
+			src/hdmiout.o \
 			src/mt32pi.o \
 			src/net/applemidi.o \
 			src/net/ftpdaemon.o \
@@ -57,19 +58,16 @@ EXTRACLEAN	+=	src/*.d src/*.o \
 # inih
 #
 OBJS		+=	$(INIHHOME)/ini.o
-INCLUDE		+=	-I $(INIHHOME)
+INCLUDE		+=	-I $(INIHHOME) \
+			-I $(CIRCLESTDLIBHOME)/include \
+			-I include \
+			-I .
 EXTRACLEAN	+=	$(INIHHOME)/ini.d \
 			$(INIHHOME)/ini.o
 
 include $(CIRCLEHOME)/Rules.mk
 
 CFLAGS		+=	-Werror -Wextra -Wno-unused-parameter
-
-CFLAGS		+=	-I "$(NEWLIBDIR)/include" \
-			-I $(STDDEF_INCPATH) \
-			-I $(CIRCLESTDLIBHOME)/include \
-			-I include \
-			-I .
 
 LIBS 		:=	$(CIRCLE_STDLIB_LIBS) \
 			$(CIRCLEHOME)/addon/fatfs/libfatfs.a \
@@ -99,10 +97,6 @@ EXTRALIBS	+=	$(FLUIDSYNTHLIB)
 
 INCLUDE		+=	-I $(YMFMHOME)/src
 EXTRALIBS	+=	$(YMFMLIB)
-
-# Increase kernel max size to 4MB to accommodate stb_vorbis (+~72KB code/data)
-# Default is 2MB; exceeding it causes BSS to overflow into the kernel stack.
-DEFINE		+=	-D KERNEL_MAX_SIZE="(4*MEGABYTE)"
 
 #
 # Generate version string from git tag

@@ -144,7 +144,7 @@ void CUserInterface::Update(CLCD& LCD, CSynthBase& Synth, unsigned int nTicks)
 	}
 
 	// SC-55 text timeout
-	else if ((m_State == TState::DisplayingSysExText && !m_bIsScrolling || m_State == TState::DisplayingSysExBitmap) && nDeltaTicks >= Utility::MillisToTicks(SC55DisplayTimeMillis))
+	else if (((m_State == TState::DisplayingSysExText && !m_bIsScrolling) || m_State == TState::DisplayingSysExBitmap) && nDeltaTicks >= Utility::MillisToTicks(SC55DisplayTimeMillis))
 	{
 		m_State = TState::None;
 		m_nStateTime = nTicks;

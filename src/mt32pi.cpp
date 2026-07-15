@@ -38,6 +38,7 @@
 #include "lcd/drivers/ssd1306.h"
 #include "lcd/ui.h"
 #include "mt32pi.h"
+#include "hdmiout.h"
 
 LOGMODULE(MT32_PI_NAME);
 const char MT32PiFullName[] = MT32_PI_NAME " " MT32_PI_VERSION;
@@ -174,7 +175,9 @@ CMT32Pi::CMT32Pi(CI2CMaster* pI2CMaster, CSPIMaster* pSPIMaster, CInterruptSyste
 	  m_nSeqFileSizeKB(0),
 	  m_bSeqPaused(false),
 	  m_nSeqPausedTick(0),
-	  m_bSeqAutoNext(false)
+	  m_bSeqAutoNext(false),
+
+	  m_HdmiOutput(this)
 {
 	s_pThis = this;
 	m_szSeqCurrentFile[0] = '\0';
@@ -1919,6 +1922,9 @@ void CMT32Pi::Run(unsigned nCore)
 		case 2:
 			return AudioTask();
 
+		case 3:
+			return VideoTask();
+
 		default:
 			break;
 	}
@@ -3462,6 +3468,12 @@ void CMT32Pi::SwitchSoundFont(size_t nIndex)
 		return;
 
 	LOGNOTE("Switching to SoundFont %d", nIndex);
+
+	// Flush audio device buffers before tearing down the synth to avoid
+	// outputting stale samples from the old SoundFont after the switch
+	if (m_pSound)
+		m_pSound->Flush();
+
 	if (m_pSoundFontSynth->SwitchSoundFont(nIndex))
 	{
 		// Handle any MIDI data that has been queued up while busy
@@ -3693,3 +3705,40 @@ void CMT32Pi::PanicHandler()
 	nOffsetX = CUserInterface::CenterMessageOffset(*s_pThis->m_pLCD, pMessage);
 	s_pThis->m_pLCD->Print(pMessage, nOffsetX, 1, true, true);
 }
+
+void CMT32Pi::VideoTask()
+{
+	LOGNOTE("Video task on Core 3 starting up");
+
+	if (!m_pConfig->VideoHDMIDisplay)
+	{
+		LOGNOTE("HDMI display disabled in config; Core 3 idle");
+		return;
+	}
+
+	LOGNOTE("HDMI display: initializing C2DGraphics (%ux%u)...", CHdmiOutput::ScreenW, CHdmiOutput::ScreenH);
+	if (!m_HdmiOutput.Initialize())
+	{
+		LOGWARN("HDMI display: C2DGraphics init failed (no HDMI cable? gpu_mem too low?)");
+		return;
+	}
+
+	LOGNOTE("HDMI display active at 1280x720");
+
+	static constexpr unsigned FrameUs = 33333u;
+	float levels[CHdmiOutput::Channels];
+	float peaks[CHdmiOutput::Channels];
+
+	while (m_bRunning)
+	{
+		unsigned t0 = CTimer::GetClockTicks();
+
+		GetMIDIChannelLevels(levels, peaks);
+		m_HdmiOutput.DrawFrame(levels, peaks);
+
+		unsigned elapsed = CTimer::GetClockTicks() - t0;
+		if (elapsed < FrameUs)
+			CTimer::SimpleMsDelay((FrameUs - elapsed) / 1000u);
+	}
+}
+

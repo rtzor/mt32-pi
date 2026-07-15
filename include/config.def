@@ -141,6 +141,10 @@ CFG(websocket_interval_ms,	int,				NetworkWebSocketIntervalMs,		250						)
 CFG(osc,			bool,				NetworkOSC,				false					)
 CFG(osc_port,			int,				NetworkOSCPort,				8000					)END_SECTION
 
+BEGIN_SECTION(video)
+CFG(hdmi_display,               bool,                           VideoHDMIDisplay,                       false                                           )
+END_SECTION
+
 #undef BEGIN_SECTION
 #undef CFG
 #undef END_SECTION
