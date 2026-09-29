@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Updated libmt32emu (Munt) to commit `6e7c01f`.
 - Updated FluidSynth to v2.6.1 (patch rebased as `fluidsynth-2.6.1-circle.patch`); the FreeVerb reverb engine is selected explicitly since 2.6 defaults to Dattorro.
+- Updated circle-stdlib to v21 (Circle Step 51.1.1); the minimal-USB-drivers patch was rebased to also drop the new gamepad drivers.
 
 ### Fixed
 

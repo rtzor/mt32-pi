@@ -55,7 +55,7 @@ endif
 # Improve I/O throughput
 	@echo "DEFINE += -DNO_BUSY_WAIT" >> $(CIRCLE_CONFIG)
 
-# Exclude unused USB device classes (already removed from Circle Step51's USB Makefile, but still
+# Exclude unused USB device classes (already removed from Circle's USB Makefile, but still
 # needed here because usbdevicefactory.cpp uses #ifndef EXCLUDE_USB_* guards)
 	@echo "DEFINE += -DEXCLUDE_USB_STORAGE" >> $(CIRCLE_CONFIG)
 	@echo "DEFINE += -DEXCLUDE_USB_MOUSE" >> $(CIRCLE_CONFIG)
