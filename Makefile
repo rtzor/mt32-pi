@@ -101,8 +101,8 @@ $(MT32EMUBUILDDIR)/.done: $(CIRCLESTDLIBHOME)/.done
 fluidsynth: $(FLUIDSYNTHBUILDDIR)/.done
 
 $(FLUIDSYNTHBUILDDIR)/.done: $(CIRCLESTDLIBHOME)/.done
-	# The Circle adaptation is verified to apply unchanged to FluidSynth 2.5.6.
-	@${APPLY_PATCH} $(FLUIDSYNTHHOME) patches/fluidsynth-2.5.5-circle.patch
+	# The Circle adaptation is rebased for FluidSynth 2.6.1.
+	@${APPLY_PATCH} $(FLUIDSYNTHHOME) patches/fluidsynth-2.6.1-circle.patch
 
 	@CFLAGS="$(CFLAGS_EXTERNAL)" \
 	CXXFLAGS="$(CFLAGS_EXTERNAL)" \
@@ -135,6 +135,7 @@ $(FLUIDSYNTHBUILDDIR)/.done: $(CIRCLESTDLIBHOME)/.done
 		 -Denable-pulseaudio=OFF \
 		 -Denable-readline=OFF \
 		 -Denable-sdl3=OFF \
+		 -Denable-signalsmith=OFF \
 		 -Denable-threads=OFF \
 		 -Denable-waveout=OFF \
 		 -Denable-winmidi=OFF \
@@ -189,7 +190,7 @@ mrproper: clean
 	@${REVERSE_PATCH} $(CIRCLEHOME) patches/circle-50-cp210x-remove-partnum-check.patch
 	@${REVERSE_PATCH} $(CIRCLEHOME) patches/circle-50-minimal-usb-drivers.patch
 	@${REVERSE_PATCH} $(CIRCLEHOME) patches/circle-50-httpdaemon-keepalive.patch
-	@${REVERSE_PATCH} $(FLUIDSYNTHHOME) patches/fluidsynth-2.5.5-circle.patch
+	@${REVERSE_PATCH} $(FLUIDSYNTHHOME) patches/fluidsynth-2.6.1-circle.patch
 
 # Clean circle-stdlib
 	@if [ -f $(CIRCLE_STDLIB_CONFIG) ]; then $(MAKE) -C $(CIRCLESTDLIBHOME) mrproper; fi

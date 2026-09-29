@@ -237,7 +237,8 @@ bool CSoundFontSynth::Initialize()
 	fluid_settings_setint(m_pSettings, "synth.device-id", static_cast<int>(TDeviceID::SoundCanvasDefault));
 	fluid_settings_setnum(m_pSettings, "synth.sample-rate", static_cast<double>(m_nSampleRate));
 	fluid_settings_setint(m_pSettings, "synth.threadsafe-api", false);
-
+    // FluidSynth 2.6 defaults to the Dattorro reverb; keep the FreeVerb engine used up to 2.5 (lower CPU load, same sound)
+    fluid_settings_setstr(m_pSettings, "synth.reverb.engine", "free");
 	return Reinitialize(pSoundFontPath, &FXProfile);
 }
 

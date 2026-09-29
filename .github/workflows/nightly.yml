@@ -28,14 +28,14 @@ jobs:
       - name: Initialise submodules (unpatched)
         run: git submodule update --init --recursive
 
-      - name: fluidsynth-2.5.5-circle.patch — dry-run
+      - name: fluidsynth-2.6.1-circle.patch — dry-run
         run: |
           if patch --dry-run --forward --strip 1 \
                --directory external/fluidsynth \
-               < patches/fluidsynth-2.5.5-circle.patch; then
-            echo "✅ fluidsynth-2.5.5-circle.patch applies cleanly"
+               < patches/fluidsynth-2.6.1-circle.patch; then
+            echo "✅ fluidsynth-2.6.1-circle.patch applies cleanly"
           else
-            echo "::error::fluidsynth-2.5.5-circle.patch does not apply cleanly to pinned submodule"
+            echo "::error::fluidsynth-2.6.1-circle.patch does not apply cleanly to pinned submodule"
             exit 1
           fi
 
