@@ -1,8 +1,8 @@
 diff --git a/lib/usb/Makefile b/lib/usb/Makefile
-index 14471753..f5282bc1 100644
+index 36fe8507..20561b11 100644
 --- a/lib/usb/Makefile
 +++ b/lib/usb/Makefile
-@@ -24,11 +24,10 @@ all: libusb.a
+@@ -24,12 +24,10 @@ all: libusb.a
  
  include $(CIRCLEHOME)/Rules.mk
  
@@ -10,10 +10,11 @@ index 14471753..f5282bc1 100644
 +OBJS	= lan7800.o smsc951x.o usbbluetooth.o usbcdcethernet.o \
  	  usbconfigparser.o usbdevice.o usbdevicefactory.o usbendpoint.o usbfunction.o \
 -	  usbgamepad.o usbgamepadps3.o usbgamepadps4.o usbgamepadstandard.o usbgamepadswitchpro.o \
--	  usbgamepadxbox360.o usbgamepadxboxone.o usbhiddevice.o usbhostcontroller.o \
--	  usbkeyboard.o usbmassdevice.o usbmidi.o usbmidihost.o usbmouse.o usbprinter.o usbrequest.o \
+-	  usbgamepad8bitdo.o usbgamepad8bitdopro.o usbgamepad8bitdoxinput.o \
+-	  usbgamepadxbox360.o usbgamepadxbox360pcwireless.o usbgamepadxboxone.o usbhiddevice.o usbhostcontroller.o \
+-	  usbkeyboard.o usbkeyboard8bitdo.o usbmassdevice.o usbmidi.o usbmidihost.o usbmouse.o usbprinter.o usbrequest.o \
 +	  usbhiddevice.o usbhostcontroller.o \
-+	  usbkeyboard.o usbmassdevice.o usbmidi.o usbmidihost.o usbrequest.o \
++	  usbkeyboard.o usbkeyboard8bitdo.o usbmassdevice.o usbmidi.o usbmidihost.o usbrequest.o \
  	  usbstandardhub.o usbstring.o usbserial.o usbserialhost.o usbserialch341.o usbserialcp210x.o \
  	  usbserialpl2303.o usbserialft231x.o usbserialcdc.o usbtouchscreen.o dwhciregister.o
  

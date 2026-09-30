@@ -68,6 +68,7 @@
 #include "ringbuffer.h"
 #include "audiomixer.h"
 #include "audioeffects.h"
+#include "hdmiout.h"
 #include "midirouter.h"
 #include "midimonitor.h"
 #include "midirecorder.h"
@@ -423,6 +424,7 @@ private:
 	void MainTask();
 	void UITask();
 	void AudioTask();
+	void VideoTask();   ///< Core 3 — HDMI display output
 
 
 	void UpdateUSB(bool bStartup = false);
@@ -597,6 +599,9 @@ private:
 
 	// Playlist queue (Core 0 only)
 	CPlaylist m_Playlist;
+
+	// HDMI visual display (Core 3)
+	CHdmiOutput   m_HdmiOutput;
 
 	// Event handling
 	TEventQueue m_EventQueue;

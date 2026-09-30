@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Raspberry Pi 5 support (`BOARD=pi5-64`, `kernel_2712.img`). Button/encoder polling on Pi 5 is done from the main loop, as it has no user timer.
+- Optional HDMI status display (`[video] hdmi_display = on`) with per-channel VU meters, synth info and sequencer progress, rendered on core 3.
+
+### Changed
+
+- Updated libmt32emu (Munt) to commit `6e7c01f`.
+- Updated FluidSynth to v2.6.1 (patch rebased as `fluidsynth-2.6.1-circle.patch`); the FreeVerb reverb engine is selected explicitly since 2.6 defaults to Dattorro.
+- Updated circle-stdlib to v21 (Circle Step 51.1.1); the minimal-USB-drivers patch was rebased to also drop the new gamepad drivers.
+
+### Fixed
+
+- Incorporated FluidSynth upstream hardening for malformed MIDI, DLS, and SoundFont input.
+
 ## [0.13.1] - 2023-03-18
 
 ### Changed
