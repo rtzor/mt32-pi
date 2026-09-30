@@ -32,7 +32,7 @@ CControl::CControl(TEventQueue& pEventQueue)
 #if RASPPI < 5
 	  m_Timer(CInterruptSystem::Get(), InterruptHandler, this),
 #else
-	  m_hTimer(0),
+	  m_nLastPollTicks(0),
 #endif
 
 	  m_ButtonStateHistory{0},
@@ -48,8 +48,8 @@ CControl::CControl(TEventQueue& pEventQueue)
 bool CControl::Initialize()
 {
 #if RASPPI >= 5
-	m_hTimer = CTimer::Get()->StartKernelTimer(1, KernelTimerHandler, this);
-	return m_hTimer != 0;
+	m_nLastPollTicks = CTimer::GetClockTicks();
+	return true;
 #else
 	if (!m_Timer.Initialize())
 		return false;
@@ -63,6 +63,15 @@ bool CControl::Initialize()
 void CControl::Update()
 {
 	TEvent Event;
+
+#if RASPPI >= 5
+	const u32 nPollTicks = CTimer::GetClockTicks();
+	if (nPollTicks - m_nLastPollTicks >= PollRateMicros)
+	{
+		m_nLastPollTicks = nPollTicks;
+		ReadGPIOPins();
+	}
+#endif
 
 	if (m_nButtonState != m_nLastButtonState)
 	{
@@ -130,16 +139,7 @@ void CControl::DebounceButtonState(u8 nState, u8 nMask)
 	m_nButtonState = (~nDebouncedButtonState) & nMask;
 }
 
-#if RASPPI >= 5
-void CControl::KernelTimerHandler(TKernelTimerHandle hTimer, void* pParam, void* pContext)
-{
-	CControl* const pThis = static_cast<CControl*>(pParam);
-
-	// Re-arm timer
-	pThis->m_hTimer = CTimer::Get()->StartKernelTimer(1, KernelTimerHandler, pThis);
-	pThis->ReadGPIOPins();
-}
-#else
+#if RASPPI < 5
 void CControl::InterruptHandler(CUserTimer* pUserTimer, void* pParam)
 {
 	CControl* const pThis = static_cast<CControl*>(pParam);

@@ -3726,15 +3726,12 @@ void CMT32Pi::VideoTask()
 	LOGNOTE("HDMI display active at 1280x720");
 
 	static constexpr unsigned FrameUs = 33333u;
-	float levels[CHdmiOutput::Channels];
-	float peaks[CHdmiOutput::Channels];
 
 	while (m_bRunning)
 	{
 		unsigned t0 = CTimer::GetClockTicks();
 
-		GetMIDIChannelLevels(levels, peaks);
-		m_HdmiOutput.DrawFrame(levels, peaks);
+		m_HdmiOutput.DrawFrame();
 
 		unsigned elapsed = CTimer::GetClockTicks() - t0;
 		if (elapsed < FrameUs)

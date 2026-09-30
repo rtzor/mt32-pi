@@ -4,7 +4,6 @@
 #include "hdmiout.h"
 
 #include <circle/serial.h>
-#include <circle/usb/usbhcidevice.h>
 #include "mt32pi.h"
 
 #include <circle/timer.h>
@@ -35,10 +34,12 @@ bool CHdmiOutput::Initialize()
 // ---------------------------------------------------------------------------
 // DrawFrame — main entry point called each tick from VideoTask()
 // ---------------------------------------------------------------------------
-void CHdmiOutput::DrawFrame(float levels[Channels], float peaks[Channels])
+void CHdmiOutput::DrawFrame()
 {
-        // Capture system state into the local snapshot (fast copy, no allocation)
-        CMT32Pi::TSystemState s = m_pKernel->GetSystemState();
+	// Capture system state into the local snapshot (fast copy, no allocation)
+	CMT32Pi::TSystemState s = m_pKernel->GetSystemState();
+	const float* levels = s.MIDILevels;
+	const float* peaks  = s.MIDIPeaks;
 
         strncpy(m_State.SynthName, s.pActiveSynthName ? s.pActiveSynthName : "mt32-pi-rt", 31);
         m_State.SynthName[31] = '\0';
@@ -126,7 +127,7 @@ void CHdmiOutput::DrawTitleBar(const char* pSynthName, const char* pRomOrSF, int
                             C2DGraphics::AlignLeft, Font8x16);
 
         m_Graphics.DrawRect(vx, vy, VolBarW, VolBarH, ColEmpty);
-        unsigned fill = static_cast<unsigned>(VolBarW * nMasterVol / 127);
+        unsigned fill = static_cast<unsigned>(VolBarW * nMasterVol / 100);
         if (fill > VolBarW) fill = VolBarW;
         if (fill > 0)
                 m_Graphics.DrawRect(vx, vy, fill, VolBarH, ColVolume);

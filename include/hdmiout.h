@@ -32,9 +32,9 @@ public:
         // Returns false if the framebuffer failed to initialize (HDMI cable absent, etc.).
         bool Initialize();
 
-        // Draw one frame. Call at ~30 fps.
-        // levels[16] and peaks[16] are 0.0–1.0 floats already computed by the caller.
-        void DrawFrame(float levels[Channels], float peaks[Channels]);
+// Draw one frame. Call at ~30 fps. Channel levels/peaks are taken from the
+	// CMT32Pi system state snapshot.
+	void DrawFrame();
 
 private:
         // ---- Layout constants (1280×720 logical grid) ----

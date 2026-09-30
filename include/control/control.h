@@ -63,10 +63,12 @@ protected:
 
 	TEventQueue* m_pEventQueue;
 #if RASPPI >= 5
-        TKernelTimerHandle m_hTimer;
+	// No user timer on Pi 5 and kernel timers only tick at 100Hz: poll from Update() instead
+	u32 m_nLastPollTicks;
 #else
-        CUserTimer m_Timer;
+	CUserTimer m_Timer;
 #endif
+
 	// Debouncing
 	u8 m_ButtonStateHistory[ButtonStateHistoryLength];
 	size_t m_nButtonStateHistoryIndex;
@@ -92,9 +94,7 @@ protected:
 		);
 	}
 
-#if RASPPI >= 5
-	static void KernelTimerHandler(TKernelTimerHandle hTimer, void* pParam, void* pContext);
-#else
+#if RASPPI < 5
 	static void InterruptHandler(CUserTimer* pUserTimer, void* pParam);
 #endif
 };

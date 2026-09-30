@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Raspberry Pi 5 support (`BOARD=pi5-64`, `kernel_2712.img`). Button/encoder polling on Pi 5 is done from the main loop, as it has no user timer.
+- Optional HDMI status display (`[video] hdmi_display = on`) with per-channel VU meters, synth info and sequencer progress, rendered on core 3.
+
 ### Changed
 
 - Updated libmt32emu (Munt) to commit `6e7c01f`.
